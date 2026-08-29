@@ -1,0 +1,1131 @@
+AULA 01 — INTRODUÇÃO A MACHINE LEARNING COM TENSORFLOW.JS
+======================================================================
+
+OBJETIVO DESTA AULA
+-------------------
+
+Entender o fluxo completo de um exemplo simples de classificação
+supervisionada:
+
+1. Começar com dados em objetos JavaScript.
+2. Separar características de entrada e respostas esperadas.
+3. Converter textos em números.
+4. Normalizar valores numéricos.
+5. Montar matrizes.
+6. Converter as matrizes em tensores.
+7. Criar e treinar uma rede neural.
+8. Preparar uma pessoa nova da mesma maneira.
+9. Pedir ao modelo uma previsão.
+10. Interpretar as probabilidades da saída.
+
+Fluxo geral:
+
+Dados brutos
+    -> preparação dos dados
+    -> matrizes numéricas
+    -> tensores
+    -> rede neural
+    -> treinamento
+    -> previsão
+
+
+1. QUAL É O PROBLEMA?
+---------------------
+
+Temos pessoas com algumas características:
+
+{
+  nome: "Erick",
+  idade: 30,
+  cor: "azul",
+  localizacao: "São Paulo",
+  categoria: "premium"
+}
+
+Queremos ensinar um modelo a receber:
+
+- idade;
+- cor;
+- localização;
+
+e tentar prever uma categoria:
+
+- premium;
+- medium;
+- basic.
+
+Esse tipo de problema é chamado de classificação multiclasse, porque existe
+mais de uma classe possível e queremos escolher uma delas.
+
+
+2. APRENDIZADO SUPERVISIONADO
+-----------------------------
+
+Este exemplo utiliza aprendizado supervisionado.
+
+No aprendizado supervisionado, cada exemplo de treinamento possui:
+
+- uma entrada com as características;
+- uma saída com a resposta correta.
+
+Exemplo:
+
+Características de Erick -> premium
+Características de Ana   -> medium
+Características de Carlos-> basic
+
+Durante o treinamento, o modelo faz uma previsão, compara essa previsão com a
+resposta correta e ajusta seus valores internos para tentar errar menos.
+
+IMPORTANTE:
+
+O modelo não inventou que Erick é premium. Essa categoria foi informada pelo
+programador ou veio de um conjunto de dados já classificado. Ela é o rótulo,
+também chamado de label.
+
+
+3. ENTRADAS (X) E SAÍDAS (Y)
+-----------------------------
+
+É comum chamar:
+
+- entradas de X ou xs;
+- respostas esperadas de Y ou ys;
+
+Neste exemplo:
+
+X = idade + cor + localização
+Y = categoria correta
+
+O nome da pessoa não é usado como característica porque ele funciona apenas
+como identificação. Usá-lo poderia incentivar o modelo a decorar indivíduos,
+em vez de aprender relações úteis.
+
+
+4. POR QUE TRANSFORMAR TUDO EM NÚMEROS?
+---------------------------------------
+
+Uma rede neural realiza operações matemáticas. Ela não entende diretamente
+palavras como:
+
+- "azul";
+- "São Paulo";
+- "premium".
+
+Essas palavras precisam ser transformadas em representações numéricas.
+
+Entretanto, não devemos simplesmente fazer:
+
+azul = 1
+vermelho = 2
+verde = 3
+
+Isso poderia sugerir matematicamente uma ordem ou distância inexistente, como
+se verde fosse maior que vermelho. Para categorias sem ordem natural,
+utilizamos uma técnica chamada one-hot encoding.
+
+
+5. ONE-HOT ENCODING
+-------------------
+
+Primeiro definimos uma ordem fixa:
+
+cores = ["azul", "vermelho", "verde"]
+
+Cada posição passa a ter um significado:
+
+posição 0 = azul
+posição 1 = vermelho
+posição 2 = verde
+
+Depois representamos cada cor:
+
+azul     -> [1, 0, 0]
+vermelho -> [0, 1, 0]
+verde    -> [0, 0, 1]
+
+O número 1 significa:
+
+"Esta é a categoria presente neste registro."
+
+O número 0 significa:
+
+"Esta não é a categoria presente neste registro."
+
+Para uma pessoa cuja cor é vermelho, fazemos:
+
+"vermelho" === "azul"     -> 0
+"vermelho" === "vermelho" -> 1
+"vermelho" === "verde"    -> 0
+
+Resultado:
+
+[0, 1, 0]
+
+Função JavaScript:
+
+function gerarOneHot(valorDaPessoa, valoresPossiveis) {
+  return valoresPossiveis.map((valor) =>
+    valorDaPessoa === valor ? 1 : 0
+  );
+}
+
+Cada pessoa recebe uma sequência com o mesmo tamanho e a mesma ordem.
+
+
+6. CODIFICAÇÃO DAS LOCALIZAÇÕES
+-------------------------------
+
+As localizações seguem exatamente a mesma lógica:
+
+localizacoes = ["São Paulo", "Rio", "Curitiba"]
+
+São Paulo -> [1, 0, 0]
+Rio       -> [0, 1, 0]
+Curitiba  -> [0, 0, 1]
+
+Uma localização não é associada manualmente a uma categoria de saída.
+A preparação apenas registra qual localização a pessoa possui.
+
+É a rede neural que tentará encontrar possíveis relações entre as
+características e as categorias durante o treinamento.
+
+
+7. CODIFICAÇÃO DAS CATEGORIAS DE SAÍDA
+--------------------------------------
+
+As respostas também usam one-hot encoding:
+
+categorias = ["premium", "medium", "basic"]
+
+premium -> [1, 0, 0]
+medium  -> [0, 1, 0]
+basic   -> [0, 0, 1]
+
+Para Ana, cuja categoria é medium:
+
+"medium" === "premium" -> 0
+"medium" === "medium"  -> 1
+"medium" === "basic"   -> 0
+
+Resultado:
+
+[0, 1, 0]
+
+A técnica é a mesma nas entradas categóricas e na saída, mas os significados
+são diferentes:
+
+- one-hot da cor informa a cor presente;
+- one-hot da localização informa a localização presente;
+- one-hot da saída informa a resposta correta.
+
+Não verificamos se uma cor ou localização "pertence" a premium. As
+características e a resposta são preparadas separadamente.
+
+
+8. A ORDEM DAS COLUNAS
+----------------------
+
+Não existe uma ordem universal obrigatória para as características.
+
+Poderíamos escolher:
+
+[idade, cores, localizações]
+
+ou:
+
+[localizações, idade, cores]
+
+O requisito fundamental é que, depois de escolhida, a ordem permaneça fixa.
+
+Na aula usamos:
+
+[
+  "idade_normalizada",
+  "azul",
+  "vermelho",
+  "verde",
+  "São Paulo",
+  "Rio",
+  "Curitiba"
+]
+
+A rede não conhece esses nomes. Ela enxerga somente posições e números.
+Nós determinamos o significado de cada posição.
+
+Se o treinamento usa:
+
+posição 1 = azul
+
+mas uma previsão futura coloca São Paulo na posição 1, a rede continuará
+interpretando aquele número como azul. Isso torna a previsão inválida.
+
+Por isso, a mesma função de preparação deve ser reutilizada no treinamento e
+nas previsões.
+
+
+9. DESCOBRINDO AS POSSIBILIDADES
+--------------------------------
+
+Podemos extrair as categorias existentes nos dados:
+
+const cores = [...new Set(pessoas.map((pessoa) => pessoa.cor))];
+
+Etapas:
+
+1. map coleta a cor de cada pessoa.
+2. Set elimina valores repetidos.
+3. O operador ... transforma o Set novamente em array.
+
+O mesmo pode ser feito com localizações.
+
+ATENÇÃO:
+
+A ordem resultante depende da ordem em que os valores aparecem nos dados.
+Em um sistema real, o vocabulário das colunas deve ser salvo junto do modelo.
+Não podemos redescobrir outra ordem quando formos realizar previsões.
+
+Também precisamos decidir o que fazer quando aparecer uma categoria nunca
+vista, por exemplo uma nova cor. Possibilidades incluem:
+
+- rejeitar o dado;
+- usar uma categoria "desconhecida";
+- atualizar o vocabulário e treinar um novo modelo.
+
+Um modelo já treinado não pode simplesmente receber uma coluna nova, pois seu
+formato de entrada é fixo.
+
+
+10. NORMALIZAÇÃO DA IDADE
+-------------------------
+
+A idade já é numérica, mas colocá-la em uma escala próxima das outras
+características costuma ajudar o treinamento.
+
+Usamos a normalização min-max:
+
+valorNormalizado = (valor - mínimo) / (máximo - mínimo)
+
+Idades:
+
+Erick  = 30
+Ana    = 25
+Carlos = 40
+
+Mínimo = 25
+Máximo = 40
+
+Ana:
+
+(25 - 25) / (40 - 25) = 0
+
+Erick:
+
+(30 - 25) / (40 - 25) = 5 / 15 = 0,333333...
+
+Carlos:
+
+(40 - 25) / (40 - 25) = 1
+
+Portanto:
+
+25 -> 0
+30 -> 0,333333...
+40 -> 1
+
+O número 22 não se transforma sempre em 0,22. O resultado depende do mínimo e
+do máximo utilizados.
+
+Pessoa nova:
+
+Guilherme possui 28 anos. Devemos usar o mesmo mínimo e máximo do treino:
+
+(28 - 25) / (40 - 25) = 3 / 15 = 0,2
+
+Nunca devemos calcular novos limites usando somente a pessoa nova.
+
+Caso o valor esteja fora do intervalo de treinamento, o resultado pode ser
+menor que 0 ou maior que 1. Isso não é necessariamente um erro matemático, mas
+indica que o modelo está recebendo algo fora da faixa que conheceu.
+
+Caso máximo e mínimo sejam iguais, a divisão seria por zero. O código trata
+isso retornando 0.
+
+
+11. MONTAGEM DA ENTRADA DE CADA PESSOA
+--------------------------------------
+
+Usamos:
+
+[
+  idadeNormalizada,
+  ...corCodificada,
+  ...localizacaoCodificada
+]
+
+O operador ... espalha os elementos dos arrays internos.
+
+Exemplo:
+
+idadeNormalizada = 0,333333
+corCodificada = [1, 0, 0]
+localizacaoCodificada = [1, 0, 0]
+
+Sem espalhamento, teríamos:
+
+[0.333333, [1, 0, 0], [1, 0, 0]]
+
+Com espalhamento, obtemos uma única linha numérica:
+
+[0.333333, 1, 0, 0, 1, 0, 0]
+
+Função:
+
+function codificarEntrada(pessoa) {
+  return [
+    normalizarIdade(pessoa.idade),
+    ...gerarOneHot(pessoa.cor, cores),
+    ...gerarOneHot(pessoa.localizacao, localizacoes),
+  ];
+}
+
+
+12. MATRIZ DE ENTRADAS
+----------------------
+
+Cada linha representa uma pessoa.
+Cada coluna representa uma característica.
+
+Ordem:
+
+[idade, azul, vermelho, verde, São Paulo, Rio, Curitiba]
+
+Matriz:
+
+[
+  [0.333333, 1, 0, 0, 1, 0, 0], // Erick
+  [0,        0, 1, 0, 0, 1, 0], // Ana
+  [1,        0, 0, 1, 0, 0, 1]  // Carlos
+]
+
+Seu formato é:
+
+3 linhas x 7 colunas
+
+Ou:
+
+3 exemplos x 7 características
+
+
+13. MATRIZ DE SAÍDAS
+--------------------
+
+Ordem:
+
+[premium, medium, basic]
+
+Matriz:
+
+[
+  [1, 0, 0], // Erick
+  [0, 1, 0], // Ana
+  [0, 0, 1]  // Carlos
+]
+
+Seu formato é:
+
+3 linhas x 3 colunas
+
+Ou:
+
+3 exemplos x 3 classes possíveis
+
+A correspondência ocorre pelo índice:
+
+entradas[0] <-> saidas[0] = Erick
+entradas[1] <-> saidas[1] = Ana
+entradas[2] <-> saidas[2] = Carlos
+
+Se as linhas forem embaralhadas separadamente, as respostas ficarão ligadas às
+pessoas erradas. Entrada e saída precisam permanecer correspondentes.
+
+
+14. MATRIZ E TENSOR NÃO SÃO A MESMA COISA
+-----------------------------------------
+
+Antes do TensorFlow, possuímos arrays JavaScript que representam matrizes:
+
+const entradas = [
+  [0.333333, 1, 0, 0, 1, 0, 0],
+  [0,        0, 1, 0, 0, 1, 0],
+  [1,        0, 0, 1, 0, 0, 1]
+];
+
+Depois:
+
+const inputXs = tf.tensor2d(entradas);
+
+tf.tensor2d não:
+
+- descobre as cores;
+- descobre as localizações;
+- define a ordem;
+- normaliza as idades;
+- faz one-hot encoding;
+- separa entrada e saída;
+- treina o modelo.
+
+Ele somente converte uma matriz numérica pronta em uma estrutura que o
+TensorFlow consegue processar eficientemente.
+
+Formato do tensor de entradas:
+
+[3, 7]
+
+Formato do tensor de saídas:
+
+[3, 3]
+
+Nem todo tensor é 2D:
+
+- tensor 1D: vetor;
+- tensor 2D: matriz;
+- tensor 3D ou superior: estruturas com mais dimensões;
+- lote de imagens coloridas: normalmente tensor 4D.
+
+
+15. O QUE É UMA REDE NEURAL?
+----------------------------
+
+Uma rede neural é um modelo matemático formado por camadas de unidades chamadas
+neurônios.
+
+Cada neurônio recebe números, combina esses números usando pesos e um viés,
+aplica uma função de ativação e envia um resultado adiante.
+
+Forma simplificada:
+
+resultado = ativação(
+  entrada1 * peso1 +
+  entrada2 * peso2 +
+  ... +
+  viés
+)
+
+Os pesos e vieses são valores internos ajustados durante o treinamento.
+
+O modelo não contém regras escritas como:
+
+se cor === "verde" então categoria = "basic"
+
+Em vez disso, aprende combinações numéricas que fazem determinadas entradas
+produzirem determinadas saídas.
+
+
+16. MODELO SEQUENCIAL
+---------------------
+
+const model = tf.sequential();
+
+Um modelo sequencial organiza as camadas em uma sequência:
+
+entrada -> primeira camada -> segunda camada -> saída
+
+A saída de uma camada torna-se a entrada da próxima.
+
+
+17. PRIMEIRA CAMADA DENSE
+-------------------------
+
+model.add(tf.layers.dense({
+  inputShape: [7],
+  units: 80,
+  activation: "relu"
+}));
+
+dense significa que cada neurônio da camada está conectado a todas as entradas
+da camada anterior.
+
+inputShape: [7]
+
+Significa que cada pessoa é representada por sete números.
+
+No código integrado usamos:
+
+inputShape: [ordemDasEntradas.length]
+
+Assim, a quantidade é calculada com base nas colunas existentes.
+
+units: 80
+
+Significa que a camada possui 80 neurônios.
+
+Mais neurônios aumentam a capacidade do modelo, mas também:
+
+- aumentam o custo computacional;
+- podem facilitar a memorização dos dados;
+- não garantem resultados melhores.
+
+Para apenas três exemplos, 80 neurônios é uma capacidade excessiva. Foi mantida
+por finalidade didática.
+
+
+18. FUNÇÃO DE ATIVAÇÃO RELU
+---------------------------
+
+ReLU significa Rectified Linear Unit.
+
+Forma simplificada:
+
+ReLU(x) = máximo entre 0 e x
+
+Exemplos:
+
+ReLU(-5) = 0
+ReLU(0)  = 0
+ReLU(3)  = 3
+
+Ela introduz não linearidade, permitindo que a rede aprenda relações mais
+complexas do que uma única combinação linear.
+
+Não é totalmente preciso dizer que a ReLU sabe se uma informação "serve" ou
+"não serve". Ela apenas aplica uma regra matemática ao valor recebido.
+
+
+19. CAMADA DE SAÍDA E SOFTMAX
+-----------------------------
+
+model.add(tf.layers.dense({
+  units: 3,
+  activation: "softmax"
+}));
+
+Há três neurônios porque existem três categorias:
+
+posição 0 = premium
+posição 1 = medium
+posição 2 = basic
+
+Softmax transforma os valores finais em probabilidades aproximadas cuja soma é
+igual a 1.
+
+Exemplo:
+
+[0.75, 0.20, 0.05]
+
+Interpretação:
+
+premium = 75%
+medium  = 20%
+basic   = 5%
+
+A categoria com maior probabilidade é a previsão do modelo.
+
+Esses valores representam a confiança matemática do modelo, não uma garantia
+de que a previsão esteja correta.
+
+
+20. COMPILAÇÃO DO MODELO
+------------------------
+
+model.compile({
+  optimizer: "adam",
+  loss: "categoricalCrossentropy",
+  metrics: ["accuracy"]
+});
+
+Compilar configura como o modelo será treinado.
+
+optimizer: "adam"
+
+Adam é o algoritmo que ajuda a ajustar pesos e vieses para diminuir o erro.
+
+loss: "categoricalCrossentropy"
+
+É a função de perda usada aqui para comparar:
+
+- distribuição prevista pelo softmax;
+- resposta correta em one-hot.
+
+Quanto pior a probabilidade atribuída à resposta correta, maior tende a ser a
+perda.
+
+metrics: ["accuracy"]
+
+Solicita o cálculo da acurácia: a proporção de exemplos cuja categoria prevista
+foi a correta.
+
+A função de perda é usada diretamente para otimização. A acurácia é uma medida
+mais fácil de interpretar, mas não guia os ajustes da mesma forma.
+
+
+21. TREINAMENTO COM MODEL.FIT
+-----------------------------
+
+await model.fit(inputXs, outputYs, {
+  epochs: 200,
+  verbose: 0,
+  shuffle: true
+});
+
+inputXs contém as características.
+outputYs contém as respostas esperadas.
+
+Uma época é uma passagem completa por todo o conjunto de treinamento.
+
+Com 200 épocas, o modelo vê o conjunto completo 200 vezes e ajusta seus pesos a
+cada passagem.
+
+shuffle: true embaralha a ordem dos exemplos durante o treinamento, mantendo
+cada entrada ligada à sua saída.
+
+verbose: 0 desativa o relatório padrão do TensorFlow. O callback personalizado
+mostra a perda ao final de cada época:
+
+Epoch 1: loss = ...
+Epoch 2: loss = ...
+
+Em geral, uma perda decrescente indica que o modelo está ajustando melhor os
+dados de treinamento. Isso não prova que ele funcionará bem em dados novos.
+
+
+22. FORWARD PASS, ERRO E BACKPROPAGATION
+----------------------------------------
+
+O ciclo de aprendizado pode ser entendido assim:
+
+1. Forward pass:
+   A entrada atravessa as camadas e produz uma previsão.
+
+2. Cálculo da perda:
+   A previsão é comparada com a resposta correta.
+
+3. Backpropagation:
+   O TensorFlow calcula como cada peso contribuiu para o erro.
+
+4. Otimização:
+   Adam ajusta os pesos para tentar reduzir a perda.
+
+5. Repetição:
+   O processo continua durante as épocas.
+
+O TensorFlow.js realiza automaticamente os cálculos de gradiente,
+backpropagation e atualização dos pesos quando usamos model.fit.
+
+
+23. PREPARAÇÃO DE UMA PESSOA NOVA
+---------------------------------
+
+Pessoa:
+
+{
+  nome: "Guilherme",
+  idade: 28,
+  cor: "verde",
+  localizacao: "Curitiba"
+}
+
+Note que ela não possui categoria, pois é justamente isso que queremos prever.
+
+Devemos aplicar exatamente o mesmo processamento:
+
+- mesmos limites de idade;
+- mesma ordem das cores;
+- mesma ordem das localizações;
+- mesmo tamanho da entrada.
+
+Idade:
+
+(28 - 25) / (40 - 25) = 0,2
+
+Cor verde:
+
+[0, 0, 1]
+
+Curitiba:
+
+[0, 0, 1]
+
+Entrada final:
+
+[0.2, 0, 0, 1, 0, 0, 1]
+
+No código, a mesma função é reutilizada:
+
+const entradaCodificada = codificarEntrada(pessoa);
+
+Isso reduz o risco de mudar acidentalmente a ordem.
+
+
+24. POR QUE A PREVISÃO RECEBE UMA MATRIZ?
+-----------------------------------------
+
+Mesmo prevendo somente uma pessoa, o modelo espera um lote de exemplos.
+
+Linha da pessoa:
+
+[0.2, 0, 0, 1, 0, 0, 1]
+
+Lote contendo uma pessoa:
+
+[
+  [0.2, 0, 0, 1, 0, 0, 1]
+]
+
+Por isso usamos:
+
+tf.tensor2d([codificarEntrada(pessoa)])
+
+Formato:
+
+[1, 7]
+
+Ou:
+
+1 exemplo x 7 características
+
+
+25. INTERPRETAÇÃO DA PREVISÃO
+-----------------------------
+
+model.predict(inputTensor) retorna um tensor com uma probabilidade por classe.
+
+Exemplo:
+
+[[0.05, 0.03, 0.92]]
+
+O array externo representa o lote.
+O array interno representa as categorias.
+
+De acordo com a ordem:
+
+["premium", "medium", "basic"]
+
+temos:
+
+premium = 5%
+medium  = 3%
+basic   = 92%
+
+O código liga índice e nome:
+
+predictionArray[0].map((prob, index) => ({
+  prob,
+  index
+}));
+
+Depois ordena da maior probabilidade para a menor e usa o índice para recuperar
+o nome da categoria.
+
+
+26. LIBERAÇÃO DE TENSORES
+-------------------------
+
+Tensores utilizam memória que deve ser administrada com cuidado.
+
+Quando um tensor não será mais utilizado:
+
+tensor.dispose();
+
+No exemplo, liberamos:
+
+- tensor temporário da nova pessoa;
+- tensor temporário da previsão;
+- tensores de entrada e saída após o treinamento e a previsão.
+
+Isso é especialmente importante em aplicações que criam tensores
+repetidamente.
+
+
+27. O QUE O TENSORFLOW.JS FAZ E O QUE NOSSO CÓDIGO FAZ
+------------------------------------------------------
+
+Nosso código:
+
+- lê os objetos;
+- descobre as possibilidades;
+- mantém uma ordem;
+- normaliza a idade;
+- aplica one-hot encoding;
+- monta as matrizes;
+- prepara pessoas novas da mesma maneira;
+- traduz índices de saída para nomes.
+
+tf.tensor2d:
+
+- converte matrizes numéricas em tensores 2D.
+
+TensorFlow.js:
+
+- cria as camadas;
+- inicializa pesos e vieses;
+- executa operações matemáticas;
+- calcula previsões;
+- calcula a perda;
+- calcula gradientes;
+- executa backpropagation;
+- atualiza pesos com o otimizador;
+- repete o treinamento pelas épocas.
+
+
+28. LIMITAÇÕES IMPORTANTES DESTE EXEMPLO
+----------------------------------------
+
+Existem somente três pessoas e cada uma possui:
+
+- uma cor diferente;
+- uma localização diferente;
+- uma categoria diferente.
+
+Assim, o modelo pode simplesmente memorizar:
+
+verde + Curitiba -> basic
+
+Ele não possui exemplos suficientes para descobrir se foi a idade, a cor, a
+localização ou uma combinação que realmente determinou a categoria.
+
+Isso é overfitting: ótimo desempenho nos exemplos de treinamento, mas pouca
+capacidade de generalizar para casos novos.
+
+Para um modelo real, precisaríamos:
+
+- muito mais exemplos;
+- vários exemplos por categoria;
+- combinações variadas de cores, idades e localizações;
+- dados representativos do mundo real;
+- separação entre treino, validação e teste;
+- uma regra legítima para definir os rótulos.
+
+As porcentagens apresentadas para Guilherme não são confiáveis cientificamente.
+Elas servem para demonstrar o funcionamento técnico do fluxo.
+
+
+29. TREINO, VALIDAÇÃO E TESTE
+-----------------------------
+
+Conceito para as próximas aulas:
+
+- treino: dados usados para ajustar os pesos;
+- validação: dados usados para acompanhar escolhas durante o desenvolvimento;
+- teste: dados separados usados para medir o resultado final.
+
+Avaliar o modelo nos mesmos exemplos usados no treinamento pode esconder a
+memorização. Um modelo útil precisa funcionar com exemplos que nunca viu.
+
+
+30. ALEATORIEDADE
+-----------------
+
+Os pesos normalmente começam com valores aleatórios. Por isso:
+
+- a perda pode começar em outro valor;
+- a velocidade do aprendizado pode variar;
+- as probabilidades finais podem mudar entre execuções.
+
+A estrutura da matriz permanece igual, mas o resultado exato do treinamento não
+é necessariamente idêntico.
+
+
+31. CUIDADOS COM INTERPRETAÇÃO E QUALIDADE DOS DADOS
+----------------------------------------------------
+
+Um modelo aprende padrões existentes nos dados fornecidos, inclusive padrões
+ruins ou injustos.
+
+Correlação não significa causa.
+
+Se as categorias tiverem consequências reais para pessoas, atributos como
+localização podem introduzir vieses. É necessário avaliar:
+
+- de onde vieram os dados;
+- quem definiu as categorias;
+- se as características são relevantes;
+- se existem grupos mal representados;
+- quais erros são aceitáveis;
+- quais consequências uma previsão errada possui.
+
+
+32. ERROS COMUNS
+----------------
+
+1. Passar objetos ou textos diretamente para tf.tensor2d.
+   O tensor precisa receber números em formato regular.
+
+2. Misturar todas as pessoas em uma lista única.
+   Cada pessoa deve ocupar sua própria linha.
+
+3. Colocar a categoria esperada dentro da entrada.
+   Isso entrega a resposta ao modelo e causa vazamento de dados.
+
+4. Usar o nome como entrada sem uma razão válida.
+   O modelo pode decorar identidades.
+
+5. Alterar a ordem das colunas na previsão.
+   O modelo interpreta posições, não nomes.
+
+6. Recalcular mínimo e máximo com os dados novos.
+   Deve-se reutilizar os parâmetros calculados no treino.
+
+7. Adicionar uma nova cor sem adaptar e treinar novamente o modelo.
+   O tamanho e o significado das entradas são fixos após o treinamento.
+
+8. Acreditar que loss baixa significa bom desempenho no mundo real.
+   Pode ser apenas memorização.
+
+9. Acreditar que softmax de 99% garante 99% de chance real de acerto.
+   A confiança pode estar mal calibrada, especialmente com poucos dados.
+
+10. Esquecer de liberar tensores temporários em aplicações contínuas.
+    Isso pode causar crescimento do uso de memória.
+
+
+33. MAPA MENTAL DO ALGORITMO
+----------------------------
+
+pessoas
+  |
+  +-> coletar idades
+  |     -> calcular mínimo e máximo
+  |     -> normalizar cada idade
+  |
+  +-> coletar cores únicas
+  |     -> definir ordem fixa
+  |     -> gerar one-hot de cada pessoa
+  |
+  +-> coletar localizações únicas
+  |     -> definir ordem fixa
+  |     -> gerar one-hot de cada pessoa
+  |
+  +-> juntar idade + cor + localização
+  |     -> matriz de entradas X
+  |
+  +-> codificar categoria
+        -> matriz de respostas Y
+
+X e Y
+  -> tf.tensor2d
+  -> model.fit
+  -> pesos ajustados
+
+pessoa nova
+  -> mesma normalização
+  -> mesmo one-hot
+  -> mesma ordem
+  -> tensor
+  -> model.predict
+  -> probabilidades
+  -> categoria com maior probabilidade
+
+
+34. RESUMO DOS TERMOS
+---------------------
+
+Característica (feature):
+Informação usada como entrada, como idade, cor ou localização.
+
+Rótulo (label):
+Resposta correta que queremos prever, como premium.
+
+Exemplo ou amostra:
+Uma linha do conjunto de dados, como Erick.
+
+Dataset:
+Conjunto de exemplos.
+
+Classificação:
+Problema em que o modelo escolhe uma categoria.
+
+One-hot encoding:
+Representação de uma categoria com uma posição 1 e as demais 0.
+
+Normalização:
+Transformação de valores numéricos para uma escala mais adequada.
+
+Matriz:
+Tabela numérica com linhas e colunas.
+
+Tensor:
+Estrutura numérica com uma ou mais dimensões usada pelo TensorFlow.
+
+Camada:
+Conjunto de neurônios que transforma os valores recebidos.
+
+Neurônio:
+Unidade matemática que combina entradas, pesos, viés e ativação.
+
+Peso:
+Valor interno que determina a influência de uma entrada.
+
+Viés (bias):
+Valor adicional ajustável usado no cálculo do neurônio.
+
+Função de ativação:
+Transformação aplicada ao resultado de um neurônio.
+
+ReLU:
+Ativação que retorna zero para valores negativos e mantém positivos.
+
+Softmax:
+Transforma saídas em uma distribuição de probabilidades entre classes.
+
+Loss ou perda:
+Medida numérica do erro do modelo.
+
+Otimizador:
+Algoritmo que ajusta pesos e vieses para reduzir a perda.
+
+Adam:
+Otimizador utilizado nesta aula.
+
+Época:
+Uma passagem completa pelo conjunto de treinamento.
+
+Forward pass:
+Passagem da entrada pela rede para produzir uma previsão.
+
+Backpropagation:
+Cálculo de como os pesos contribuíram para o erro.
+
+Predição:
+Saída produzida pelo modelo para uma entrada.
+
+Generalização:
+Capacidade de funcionar bem em dados nunca vistos.
+
+Overfitting:
+Quando o modelo memoriza o treino e não generaliza bem.
+
+
+35. O QUE FOI APRENDIDO NESTA AULA
+----------------------------------
+
+Ao final desta aula, compreendemos:
+
+- a diferença entre dados brutos, matrizes e tensores;
+- a separação entre entradas e respostas;
+- como normalizar uma idade com min-max;
+- como codificar categorias usando one-hot encoding;
+- por que a ordem das colunas é arbitrária, mas precisa ser fixa;
+- como montar uma linha numérica para cada pessoa;
+- como montar as matrizes X e Y;
+- o que tf.tensor2d realmente faz;
+- a estrutura básica de uma rede neural sequencial;
+- o papel das camadas Dense, ReLU e Softmax;
+- o papel de Adam e categoricalCrossentropy;
+- o significado de épocas, perda e treinamento;
+- como codificar uma pessoa nova com o mesmo processo;
+- como interpretar as probabilidades da previsão;
+- por que três exemplos não formam um modelo confiável;
+- a diferença entre aprender um padrão e memorizar exemplos.
+
+
+36. FRASE CENTRAL PARA LEMBRAR
+------------------------------
+
+Uma rede neural não entende os nomes das informações. Ela recebe números em
+posições fixas, ajusta pesos ao comparar previsões com respostas conhecidas e
+tenta usar o padrão aprendido para prever respostas de exemplos novos.
+
+======================================================================
+FIM DA REFERÊNCIA DA AULA 01
+======================================================================
