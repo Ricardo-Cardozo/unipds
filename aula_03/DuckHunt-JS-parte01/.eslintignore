@@ -1,0 +1,8 @@
+# Dependências instaladas pelo npm.
+node_modules/
+
+# Arquivos gerados pelo Webpack.
+dist/
+
+# Biblioteca de terceiro mantida sem alterações nesta aula.
+vendor/

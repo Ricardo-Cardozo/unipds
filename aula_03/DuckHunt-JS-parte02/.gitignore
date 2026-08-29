@@ -1,0 +1,8 @@
+node_modules*
+.terraform
+terraform.tfstate
+terraform.tfstate.*
+*.js.map
+
+# A regra global ignora lockfiles; nesta aula ele garante a mesma instalação.
+!package-lock.json

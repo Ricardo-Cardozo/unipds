@@ -1,0 +1,2055 @@
+AULA 03 — VISÃO COMPUTACIONAL EM UM JOGO COM TENSORFLOW.JS,
+YOLOV5N, PIXIJS E WEB WORKER
+======================================================================
+
+OBJETIVO DESTA REFERÊNCIA
+-------------------------
+
+Este arquivo registra todo o conteúdo estudado e praticado na Aula 3.
+
+Ele serve como base de consulta futura e segue o mesmo formato das referências
+das Aulas 1 e 2.
+
+Nesta aula, integramos inteligência artificial ao Duck Hunt. A aplicação captura
+imagens do próprio jogo, envia as imagens para um Web Worker, executa um modelo
+YOLOv5n com TensorFlow.js, encontra o centro do objeto detectado e transforma a
+previsão em um disparo.
+
+Assuntos principais:
+
+1. Visão computacional.
+2. Classificação e detecção de objetos.
+3. Modelo pré-treinado YOLOv5n.
+4. TensorFlow.js GraphModel.
+5. Captura do canvas como ImageBitmap.
+6. Transferência de imagem para Web Worker.
+7. Pré-processamento em tensores.
+8. Redimensionamento e normalização.
+9. Inferência assíncrona.
+10. Bounding boxes, classes e scores.
+11. Filtro por confiança e classe.
+12. Conversão para coordenadas do jogo.
+13. Generator para processar previsões.
+14. Mira e disparo automáticos.
+15. HUD de depuração.
+16. Memória com tf.tidy() e dispose().
+17. PixiJS, Webpack, Babel e ESLint.
+18. Template, Parte 1 e Parte 2.
+19. Erros encontrados e correções.
+20. Limitações e melhorias futuras.
+
+Fluxo geral:
+
+Duck Hunt renderizado pelo PixiJS
+        |
+        v
+canvas extraído da cena
+        |
+        v
+createImageBitmap(canvas)
+        |
+        v
+postMessage para Web Worker
+        |
+        v
+TensorFlow.js + YOLOv5n
+        |
+        v
+tensor [1, 640, 640, 3]
+        |
+        v
+boxes + scores + classes
+        |
+        v
+filtro + centro do bounding box
+        |
+        v
+x, y e score
+        |
+        v
+mira + handleClick()
+
+
+1. QUAL É O PROBLEMA DA AULA 3?
+-------------------------------
+
+O Duck Hunt é um jogo em que alvos se movimentam pela tela e o jogador precisa
+clicar na posição correta para acertá-los.
+
+O desafio é fazer uma IA jogar automaticamente.
+
+O sistema precisa responder repetidamente:
+
+1. O que está visível?
+2. Existe um objeto reconhecível?
+3. Qual é sua classe?
+4. Qual é a confiança?
+5. Onde está sua caixa?
+6. Qual é o centro da caixa?
+7. Como transformar o centro em clique?
+
+Não basta saber que existe um objeto. Precisamos de sua localização.
+
+
+2. CLASSIFICAÇÃO E DETECÇÃO
+---------------------------
+
+CLASSIFICAÇÃO
+
+Entrada:
+    uma imagem;
+
+Saída:
+    uma classe.
+
+Exemplo:
+
+imagem -> pássaro
+
+Ela não informa onde o pássaro está.
+
+DETECÇÃO
+
+Entrada:
+    uma imagem;
+
+Saída:
+    classe + confiança + bounding box.
+
+Exemplo:
+
+imagem -> kite, 87%, [x1, y1, x2, y2]
+
+Para mover a mira precisamos de detecção.
+
+
+3. VISÃO COMPUTACIONAL
+----------------------
+
+Visão computacional permite extrair informações de imagens e vídeos.
+
+Algumas tarefas:
+
+- classificação;
+- detecção;
+- segmentação;
+- leitura de texto;
+- estimativa de pose;
+- reconhecimento;
+- rastreamento.
+
+Nesta aula, a tela do jogo é tratada como uma sequência de imagens.
+
+
+4. O QUE É YOLO?
+----------------
+
+YOLO significa:
+
+You Only Look Once
+
+É uma família de detectores que analisa a imagem de forma integrada.
+
+Usamos YOLOv5n:
+
+YOLO:
+    família;
+
+v5:
+    versão;
+
+n:
+    variante nano.
+
+A variante nano prioriza velocidade e tamanho menor, características úteis para
+uma demonstração executada no navegador.
+
+
+5. MODELO PRÉ-TREINADO
+----------------------
+
+Na Aula 2, criamos e treinamos uma rede neural.
+
+Na Aula 3:
+
+- não treinamos o YOLO no navegador;
+- carregamos pesos já treinados;
+- executamos inferência;
+- processamos a saída;
+- integramos a previsão ao jogo.
+
+Treinamento:
+
+dados + algoritmo -> pesos aprendidos
+
+Inferência:
+
+imagem + pesos aprendidos -> previsão
+
+
+6. GRAPHMODEL E ARQUIVOS
+------------------------
+
+O modelo usa o formato GraphModel do TensorFlow.js.
+
+Arquivos:
+
+model.json
+    grafo, operações e metadados;
+
+group1-shard1of2.bin
+    primeiro bloco de pesos, aproximadamente 4 MB;
+
+group1-shard2of2.bin
+    segundo bloco, aproximadamente 3,2 MB;
+
+labels.json
+    nomes das 80 classes.
+
+Carregamento:
+
+tf.loadGraphModel(MODEL_PATH)
+
+GraphModel é diferente de um modelo Sequential criado diretamente no browser.
+
+
+7. AS 80 CLASSES E A CLASSE KITE
+--------------------------------
+
+O labels.json contém classes do conjunto COCO, como:
+
+- person;
+- car;
+- airplane;
+- bird;
+- dog;
+- kite;
+- sports ball;
+- bottle;
+- chair;
+- laptop;
+- cell phone;
+- book;
+- teddy bear.
+
+O código final filtra:
+
+kite
+
+O modelo retorna índice numérico. O labels.json converte:
+
+índice 0 -> person
+índice 14 -> bird
+índice 33 -> kite
+
+O jogo mostra patos, mas o modelo não foi treinado especificamente com esses
+sprites. Usar kite é uma decisão prática da demonstração.
+
+Uma solução especializada deveria treinar ou ajustar um detector para os sprites
+reais e usar uma classe própria, como duck ou target.
+
+
+8. ESTRUTURA DA AULA
+--------------------
+
+aula_03/
+|-- DuckHunt-JS-parte01/
+|-- DuckHunt-JS-parte02/
+|-- _template/
+`-- aula_03_referencia.txt
+
+Cada projeto contém:
+
+|-- package.json
+|-- package-lock.json
+|-- webpack.config.js
+|-- gulpfile.js
+|-- main.js
+|-- README.md
+|-- machine-learning/
+|   |-- main.js
+|   |-- layout.js
+|   |-- worker.js
+|   `-- yolov5n_web_model/
+|-- src/
+|   |-- data/
+|   |-- libs/
+|   |-- modules/
+|   `-- assets/
+|-- dist/
+|-- eslint/
+`-- vendor/
+
+
+9. TEMPLATE, PARTE 1 E PARTE 2
+------------------------------
+
+TEMPLATE
+
+- inicia o Worker;
+- recebe predict;
+- devolve x = 400, y = 400 e score = 0;
+- serve como esqueleto.
+
+PARTE 1
+
+- espera TensorFlow.js;
+- carrega labels e modelo;
+- aquece o modelo;
+- transforma a imagem em tensor;
+- executa inferência;
+- libera tensores;
+- ainda devolve posição fixa.
+
+PARTE 2
+
+- lê boxes, scores e classes;
+- aplica limite de confiança;
+- seleciona kite;
+- converte a caixa para pixels;
+- calcula o centro;
+- envia coordenadas reais.
+
+Progressão:
+
+comunicação -> modelo -> pós-processamento -> automação
+
+
+10. TECNOLOGIAS
+---------------
+
+PIXIJS
+    jogo, sprites, canvas e HUD;
+
+TENSORFLOW.JS
+    execução do modelo;
+
+YOLOV5N
+    detecção de objetos;
+
+WEB WORKER
+    inferência fora da thread principal;
+
+WEBPACK
+    build e cópia do modelo;
+
+BABEL
+    JavaScript moderno;
+
+GSAP
+    animações;
+
+HOWLER
+    áudio;
+
+GULP
+    tarefas de assets;
+
+ESLINT
+    qualidade e consistência.
+
+
+11. INICIALIZAÇÃO DO JOGO
+-------------------------
+
+O main.js da raiz espera DOMContentLoaded.
+
+Depois:
+
+1. cria Game;
+2. informa sprites.json;
+3. espera game.load();
+4. inicia machine-learning/main.js.
+
+Fluxo:
+
+DOM pronto
+    -> new Game()
+    -> game.load()
+    -> PixiJS e texturas
+    -> Stage
+    -> jogo
+    -> integração com IA
+
+O await evita acessar game.stage antes da inicialização.
+
+
+12. GAME.LOAD()
+---------------
+
+Game.load() cria PIXI.Application.
+
+Configura:
+
+- largura da janela;
+- altura da janela;
+- fundo azul;
+- canvas no body.
+
+Depois carrega o spritesheet e chama onLoad().
+
+onLoad():
+
+- cria Stage;
+- adiciona Stage;
+- escala para a janela;
+- cria links do HUD;
+- registra eventos;
+- inicia fase;
+- inicia animação.
+
+
+13. STAGE E COORDENADAS
+-----------------------
+
+Stage estende PIXI.Container.
+
+Ele agrupa:
+
+- fundo;
+- árvore;
+- cachorro;
+- patos;
+- clarão;
+- HUD;
+- mira.
+
+Sistema lógico:
+
+MAX_X = 800
+MAX_Y = 600
+
+Escala:
+
+scale.x = largura da janela / 800
+scale.y = altura da janela / 600
+
+Existem coordenadas globais da tela e coordenadas lógicas do jogo.
+
+
+14. A MIRA
+----------
+
+Aim estende PIXI.Sprite.
+
+Configuração:
+
+- textura aim/0.png;
+- tamanho 40 x 40;
+- posição inicial 350, 350;
+- limites do Stage.
+
+Métodos:
+
+setPosition(x, y)
+    posição absoluta;
+
+move(x, y)
+    deslocamento relativo;
+
+reset()
+    volta ao início e oculta.
+
+A IA usa setPosition(), porque a previsão representa posição absoluta.
+
+
+15. HANDLECLICK E DISPARO
+-------------------------
+
+Game.handleClick(event) recebe:
+
+event.global.x
+event.global.y
+
+Primeiro verifica links de pause, mute, fullscreen, criação de fase e replay.
+
+Se o jogo está ativo:
+
+1. toca o tiro;
+2. reduz uma bala;
+3. chama stage.shotsFired();
+4. atualiza a pontuação.
+
+A IA reutiliza esse mesmo fluxo, simulando um evento compatível.
+
+
+16. COMO O ACERTO É CONFIRMADO
+------------------------------
+
+Stage.shotsFired():
+
+1. mostra clarão;
+2. percorre os patos;
+3. confirma se estão vivos;
+4. converte clique global para escala lógica;
+5. mede distância;
+6. compara com o raio;
+7. chama duck.shot();
+8. devolve a quantidade atingida.
+
+Conversão:
+
+x lógico = x global / scale.x
+y lógico = y global / scale.y
+
+
+17. HUD DA IA
+-------------
+
+layout.js cria:
+
+- scoreText;
+- predictionsText.
+
+Exibição:
+
+Score: confiança
+Predictions: (x, y)
+
+O HUD usa fonte monospace e fica no canto superior direito.
+
+Ao redimensionar:
+
+1. mede os textos;
+2. consulta renderer.width;
+3. recalcula hud.x;
+4. mantém margem de 16 pixels.
+
+O Score desse HUD é confiança da detecção, não a pontuação total do jogo.
+
+
+18. POR QUE WEB WORKER?
+-----------------------
+
+A thread principal cuida de:
+
+- eventos;
+- renderização;
+- animação;
+- interface.
+
+Inferência é pesada e pode travar o jogo.
+
+Divisão:
+
+THREAD PRINCIPAL
+
+- renderiza;
+- captura canvas;
+- recebe previsão;
+- move mira;
+- dispara.
+
+WORKER
+
+- carrega TensorFlow.js;
+- carrega modelo;
+- cria tensores;
+- infere;
+- processa detecções.
+
+
+19. WORKER CLÁSSICO
+-------------------
+
+worker.js usa:
+
+importScripts(URL_DO_TENSORFLOW)
+
+importScripts() pertence ao Worker clássico.
+
+Por isso usamos:
+
+new Worker(new URL('./worker.js', import.meta.url))
+
+Não usamos type: module.
+
+Misturar Worker módulo com importScripts() causaria erro em execução.
+
+
+20. PROTOCOLO DE MENSAGENS
+--------------------------
+
+Principal para Worker:
+
+{
+    type: predict,
+    image: bitmap
+}
+
+Worker para principal:
+
+{
+    type: prediction,
+    x,
+    y,
+    score
+}
+
+O Worker também informa:
+
+{
+    type: model-loaded
+}
+
+O campo type cria um protocolo extensível e evita tratar todas as mensagens da
+mesma forma.
+
+
+21. CAPTURA DO CANVAS
+---------------------
+
+O código extrai a cena:
+
+canvas = game.app.renderer.extract.canvas(game.stage)
+
+Depois:
+
+bitmap = await createImageBitmap(canvas)
+
+Fluxo:
+
+objetos PixiJS
+    -> canvas
+    -> ImageBitmap
+    -> Worker
+    -> tensor
+
+O modelo não conhece Game, Duck ou Stage. Ele recebe pixels.
+
+
+22. INTERVALO DE 200 MS
+-----------------------
+
+setInterval executa uma tentativa a cada 200 milissegundos.
+
+Em condição ideal:
+
+1000 / 200 = 5 tentativas por segundo
+
+Isso não garante cinco inferências concluídas por segundo.
+
+Se a inferência demorar mais de 200 ms:
+
+- solicitações podem acumular;
+- a previsão pode ficar atrasada;
+- CPU/GPU podem permanecer saturadas;
+- a mira pode perseguir posição antiga.
+
+Melhoria:
+
+Enviar nova imagem somente quando o Worker responder ou informar que está livre.
+Isso é controle de backpressure.
+
+
+23. TRANSFER LIST
+-----------------
+
+O envio usa:
+
+worker.postMessage(mensagem, [bitmap])
+
+O segundo argumento transfere o ImageBitmap.
+
+Vantagens:
+
+- evita cópia grande;
+- reduz custo de memória;
+- melhora comunicação.
+
+Depois da transferência, a thread principal não deve reutilizar o bitmap.
+
+
+24. CARREGAMENTO DO TENSORFLOW.JS
+---------------------------------
+
+No Worker:
+
+importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest')
+
+Depois:
+
+await tf.ready()
+
+Ordem:
+
+1. carregar biblioteca;
+2. esperar backend;
+3. carregar labels;
+4. carregar modelo;
+5. aquecer;
+6. aceitar imagens.
+
+Limitação:
+
+latest não fixa versão. Uma atualização do CDN pode mudar compatibilidade.
+
+Para reprodutibilidade, fixar uma versão conhecida.
+
+
+25. CAMINHOS E COPYWEBPACKPLUGIN
+--------------------------------
+
+Constantes:
+
+MODEL_PATH = yolov5n_web_model/model.json
+LABELS_PATH = yolov5n_web_model/labels.json
+
+CopyWebpackPlugin copia:
+
+machine-learning/yolov5n_web_model
+
+para:
+
+dist/yolov5n_web_model
+
+Sem isso, model.json e os pesos retornariam 404.
+
+
+26. LABELS
+----------
+
+O Worker faz fetch de labels.json e converte para array.
+
+O modelo retorna classes numéricas por eficiência.
+
+Exemplo:
+
+classIndex = 33
+labels[33] = kite
+
+Sem os labels, teríamos apenas números.
+
+
+27. CARREGAMENTO DO GRAPHMODEL
+------------------------------
+
+model = await tf.loadGraphModel(MODEL_PATH)
+
+O navegador:
+
+1. busca model.json;
+2. lê o grafo;
+3. encontra os shards;
+4. baixa os pesos;
+5. monta o modelo.
+
+Se model ainda não existe, predict retorna imediatamente.
+
+Essa guarda evita executeAsync() sobre valor nulo.
+
+
+28. WARMUP
+----------
+
+O aquecimento cria:
+
+dummyInput = tf.ones(model.inputs[0].shape)
+
+Depois executa:
+
+await model.executeAsync(dummyInput)
+
+Motivos:
+
+- preparar kernels;
+- alocar recursos;
+- inicializar operações;
+- reduzir custo da primeira imagem real.
+
+O dummyInput é descartado.
+
+Ponto de melhoria:
+
+As saídas da inferência de warmup também devem ser explicitamente descartadas,
+pois executeAsync() produz tensores.
+
+
+29. FORMATO DE ENTRADA
+----------------------
+
+Formato final:
+
+[1, 640, 640, 3]
+
+1:
+    batch;
+
+640:
+    altura;
+
+640:
+    largura;
+
+3:
+    canais RGB.
+
+expandDims(0) adiciona o batch.
+
+
+30. PRÉ-PROCESSAMENTO
+---------------------
+
+preprocessImage():
+
+1. tf.browser.fromPixels(input);
+2. tf.image.resizeBilinear(image, [640, 640]);
+3. div(255);
+4. expandDims(0).
+
+fromPixels:
+    imagem para tensor;
+
+resize:
+    tamanho esperado;
+
+div:
+    normalização;
+
+expandDims:
+    batch.
+
+
+31. FROMPIXELS
+--------------
+
+fromPixels produz tipicamente:
+
+[altura, largura, 3]
+
+Valores originais:
+
+0 até 255
+
+Exemplos:
+
+preto = [0, 0, 0]
+branco = [255, 255, 255]
+vermelho = [255, 0, 0]
+
+
+32. RESIZE BILINEAR
+-------------------
+
+resizeBilinear transforma a imagem em 640 x 640.
+
+A interpolação bilinear considera pixels vizinhos e tende a ser mais suave que
+nearest neighbor.
+
+Limitação:
+
+Uma imagem retangular redimensionada diretamente para um quadrado sofre
+distorção.
+
+Alternativa:
+
+letterbox:
+
+- preserva proporção;
+- adiciona padding;
+- remove o efeito do padding nas coordenadas finais.
+
+
+33. NORMALIZAÇÃO
+----------------
+
+Fórmula:
+
+pixel normalizado = pixel / 255
+
+Exemplos:
+
+0 -> 0
+127,5 -> 0,5
+255 -> 1
+
+Faixa final:
+
+[0, 1]
+
+O pré-processamento deve ser compatível com aquele esperado pelo modelo.
+
+
+34. TF.TIDY()
+-------------
+
+tf.tidy() envolve o pré-processamento.
+
+Ele descarta intermediários:
+
+- tensor inicial;
+- redimensionado;
+- dividido.
+
+O tensor retornado sobrevive ao tidy e precisa de dispose depois.
+
+Regra:
+
+tidy cuida dos temporários internos;
+dispose cuida do valor que saiu do tidy.
+
+
+35. EXECUTEASYNC
+----------------
+
+runInference(tensor) chama:
+
+output = await model.executeAsync(tensor)
+
+Depois:
+
+tf.dispose(tensor)
+
+O código assume que as três primeiras saídas são:
+
+1. boxes;
+2. scores;
+3. classes.
+
+Promise.all lê os três tensores em paralelo:
+
+boxes.data()
+scores.data()
+classes.data()
+
+Depois todos os tensores de output são descartados.
+
+
+36. TENSOR.DATA()
+-----------------
+
+Tensor é estrutura gerenciada pelo TensorFlow.js.
+
+data() copia ou disponibiliza seus valores para JavaScript e retorna Promise.
+
+Depois de:
+
+boxesData = await boxes.data()
+
+podemos descartar boxes e continuar usando boxesData.
+
+Trade-off:
+
+- necessário para pós-processar com JavaScript;
+- pode causar sincronização e transferência GPU -> CPU;
+- uso excessivo pode reduzir desempenho.
+
+
+37. SAÍDAS DO MODELO
+--------------------
+
+BOXES
+
+Coordenadas das caixas.
+
+SCORES
+
+Confiança de cada detecção.
+
+CLASSES
+
+Índice da classe de cada detecção.
+
+O model.json declara quatro saídas de assinatura, mas o código aproveita as três
+primeiras e descarta todas ao final.
+
+Importante:
+
+O significado e a ordem das saídas dependem da conversão do modelo. Ao trocar o
+arquivo, devemos inspecionar model.outputs e shapes, em vez de assumir que a nova
+versão segue a mesma ordem.
+
+
+38. LIMIAR DE CONFIANÇA
+-----------------------
+
+Constante:
+
+CLASS_THRESHOLD = 0.4
+
+Regra:
+
+se score < 0.4:
+    ignorar
+
+0.4 equivale a 40% na apresentação.
+
+Threshold menor:
+
+- mais detecções;
+- mais falsos positivos.
+
+Threshold maior:
+
+- menos falsos positivos;
+- risco de perder alvos.
+
+O valor ideal deve ser medido.
+
+
+39. FILTRO DE CLASSE
+--------------------
+
+Depois do score:
+
+label = labels[classes[index]]
+
+Se label não for kite, a previsão é ignorada.
+
+O filtro evita atirar em outras classes.
+
+Para aceitar bird e kite:
+
+classes permitidas = [bird, kite]
+
+Para um modelo customizado:
+
+classe permitida = duck
+
+
+40. BOUNDING BOX
+----------------
+
+O código pega quatro valores:
+
+[x1, y1, x2, y2]
+
+Interpretação:
+
+x1, y1:
+    canto inicial;
+
+x2, y2:
+    canto final.
+
+Depois multiplica:
+
+x por largura;
+y por altura.
+
+Isso pressupõe coordenadas normalizadas entre 0 e 1.
+
+Ponto crítico:
+
+Alguns modelos usam ordem [y1, x1, y2, x2]. Sempre confirmar a assinatura e uma
+imagem de teste. Inverter a ordem desloca a mira.
+
+
+41. CONVERSÃO PARA PIXELS
+-------------------------
+
+Se a caixa é normalizada:
+
+xPixel = xNormalizado * largura
+yPixel = yNormalizado * altura
+
+Exemplo:
+
+largura = 1000
+x = 0,25
+
+xPixel = 250
+
+O Worker usa width e height do ImageBitmap original, não 640, porque a mira deve
+voltar ao espaço da imagem capturada.
+
+
+42. CENTRO DA CAIXA
+-------------------
+
+Fórmulas:
+
+boxWidth = x2 - x1
+boxHeight = y2 - y1
+
+centerX = x1 + boxWidth / 2
+centerY = y1 + boxHeight / 2
+
+Forma equivalente:
+
+centerX = (x1 + x2) / 2
+centerY = (y1 + y2) / 2
+
+Atirar no centro reduz o risco de mirar apenas na borda.
+
+
+43. GENERATOR
+-------------
+
+processPrediction é function*.
+
+Um generator usa yield.
+
+Em vez de criar uma lista completa, ele entrega uma previsão por vez.
+
+Consumo:
+
+for (const prediction of processPrediction(...))
+
+Vantagens didáticas:
+
+- fluxo incremental;
+- memória controlada;
+- separação entre filtrar e enviar.
+
+No volume pequeno dessa aula, um array também funcionaria. O generator ensina
+uma forma elegante de produzir resultados sob demanda.
+
+
+44. ENVIO DAS PREVISÕES
+-----------------------
+
+Para cada previsão aceita:
+
+postMessage({
+    type: prediction,
+    x,
+    y,
+    score
+})
+
+O score é:
+
+scores[index] * 100
+
+e depois:
+
+toFixed(2)
+
+Consequência:
+
+score vira string formatada, por exemplo:
+
+87.42
+
+Se precisarmos calcular com ele depois, é melhor manter número e formatar apenas
+na View.
+
+
+45. RECEBIMENTO NA THREAD PRINCIPAL
+-----------------------------------
+
+worker.onmessage recebe data.
+
+Se type for prediction:
+
+1. registra coordenadas no console;
+2. atualiza o HUD;
+3. torna a mira visível;
+4. define posição;
+5. obtém posição global;
+6. chama game.handleClick().
+
+O getGlobalPosition() é importante porque handleClick() espera coordenadas
+globais, como um evento real do PixiJS.
+
+
+46. MEMÓRIA E DISPOSE
+---------------------
+
+Tensores podem ocupar CPU, GPU ou WebGL.
+
+O garbage collector do JavaScript não conhece sozinho todos os recursos internos
+do TensorFlow.js.
+
+Nesta aula:
+
+- tf.tidy() descarta temporários;
+- input é descartado depois de executeAsync();
+- outputs são descartados depois de data();
+- dummyInput é descartado.
+
+Vazamento repetido cinco vezes por segundo cresce rapidamente.
+
+tf.memory() ajuda a observar quantidade de tensores e bytes.
+
+
+47. IMAGEMBITMAP E RECURSOS
+---------------------------
+
+Além dos tensores, ImageBitmap também merece atenção.
+
+Depois de criar o tensor, uma evolução pode chamar close() no bitmap quando não
+houver mais uso.
+
+O objetivo é não manter recursos gráficos antigos enquanto novas capturas são
+produzidas continuamente.
+
+
+48. WEBPACK
+-----------
+
+Configuração:
+
+mode:
+    development;
+
+entry:
+    main.js;
+
+output:
+    dist/duckhunt.js;
+
+devtool:
+    source-map;
+
+devServer:
+    porta 8080;
+
+CopyWebpackPlugin:
+    copia o modelo;
+
+Babel loader:
+    transpila JavaScript.
+
+O Webpack reconhece a construção new Worker com new URL e gera um bundle
+separado para o Worker.
+
+
+49. SERVIDOR LOCAL
+------------------
+
+Não devemos abrir apenas com protocolo file.
+
+O navegador aplica regras que podem impedir:
+
+- fetch de labels;
+- fetch do modelo;
+- Worker;
+- assets;
+- módulos.
+
+Por isso usamos npm start e acessamos:
+
+http://localhost:8080
+
+
+50. COMO EXECUTAR
+-----------------
+
+Escolher a versão final:
+
+cd aula_03/DuckHunt-JS-parte02
+
+Instalar:
+
+npm install
+
+Validar:
+
+npm run lint
+
+Compilar:
+
+npm run build
+
+Executar:
+
+npm start
+
+Encerrar:
+
+Ctrl+C
+
+Docker e PostgreSQL não são necessários na Aula 3.
+
+
+51. COMANDOS
+------------
+
+npm start
+    inicia webpack-dev-server;
+
+npm run build
+    gera o build;
+
+npm run lint
+    verifica todos os arquivos JavaScript próprios;
+
+npm run audio
+    reconstrói áudio e exige ffmpeg;
+
+npm run images
+    reconstrói sprites e exige TexturePacker;
+
+npm run gulp
+    executa Gulp.
+
+O script test original ainda informa que não há testes automatizados.
+
+
+52. ERRO EM ASYNC FUNCTION
+--------------------------
+
+export default async function main(game) é JavaScript válido.
+
+O erro Unexpected token function vinha do ESLint antigo.
+
+Correções:
+
+- ESLint 4.18.2 atualizado para 8.57.1;
+- ecmaVersion 2022;
+- sourceType module;
+- ambientes browser, worker e node.
+
+Cercas de Markdown pertencem à documentação. Se uma marca javascript com três
+acentos graves for colada dentro de main.js, causará erro.
+
+
+53. COBERTURA DO ESLINT
+-----------------------
+
+Antes:
+
+eslint apenas em src
+
+Isso ignorava machine-learning, main, Webpack e Gulp.
+
+Agora:
+
+eslint no projeto inteiro, extensão js.
+
+Ignorados:
+
+- node_modules, dependências;
+- dist, código gerado;
+- vendor, terceiro preservado.
+
+
+54. CORREÇÕES DO ESLINT
+-----------------------
+
+Foram corrigidos:
+
+- aspas;
+- indentação;
+- ponto e vírgula;
+- espaçamento;
+- shorthand;
+- método move duplicado;
+- debugger esquecido;
+- variáveis não usadas;
+- ambiente importScripts;
+- global tf;
+- __dirname em Node;
+- var para let ou const;
+- linha longa do Gulp;
+- logs intencionais documentados.
+
+Os comentários existentes foram preservados.
+
+
+55. MÉTODO MOVE DUPLICADO
+-------------------------
+
+Aim possuía dois métodos move.
+
+Em classe JavaScript, a última definição substitui a anterior.
+
+Correção:
+
+- setPosition ficou para posição absoluta;
+- move ficou para deslocamento;
+- construtor usa setPosition.
+
+
+56. VALIDAÇÕES
+--------------
+
+Nos três projetos:
+
+- DuckHunt-JS-parte01;
+- DuckHunt-JS-parte02;
+- _template.
+
+npm run lint:
+
+zero erros e zero avisos.
+
+npm run build:
+
+Webpack compilou as três versões.
+
+Foram validados sintaxe, imports, Worker, bundles e cópia do modelo.
+
+
+57. DEPENDÊNCIAS ANTIGAS
+------------------------
+
+npm install informou vulnerabilidades em dependências históricas do Duck Hunt.
+
+Elas não são erros de ESLint.
+
+Não executar npm audit fix com force automaticamente.
+
+Uma modernização segura deve:
+
+1. criar branch;
+2. atualizar por grupos;
+3. compilar;
+4. jogar;
+5. testar áudio e imagens;
+6. revisar breaking changes.
+
+
+58. ERROS COMUNS
+----------------
+
+ERRO: Unexpected token function
+
+Causa:
+    parser antigo.
+
+Correção:
+    ESLint moderno e ecmaVersion 2022.
+
+ERRO: importScripts is not defined
+
+Causa:
+    ambiente Worker ausente no lint.
+
+Correção:
+    declarar env worker.
+
+ERRO: importScripts falha no navegador
+
+Causa:
+    Worker criado como module.
+
+Correção:
+    Worker clássico ou import modular.
+
+ERRO: tf is not defined
+
+Causa:
+    tf chega externamente e o linter não sabe.
+
+Correção:
+    declarar tf readonly.
+
+ERRO: model.json retorna 404
+
+Correção:
+    conferir build, CopyWebpackPlugin e pasta do servidor.
+
+ERRO: mira no lugar errado
+
+Verificar:
+
+- ordem x e y;
+- width e height;
+- escala do Stage;
+- resize para quadrado;
+- posição global.
+
+ERRO: jogo lento
+
+Verificar:
+
+- intervalo de 200 ms;
+- fila;
+- tf.memory();
+- dispose;
+- tamanho do canvas.
+
+ERRO: nenhuma previsão
+
+Verificar:
+
+- threshold;
+- classe kite;
+- modelo carregado;
+- labels;
+- imagem capturada.
+
+
+59. DEBUG PASSO A PASSO
+-----------------------
+
+1. Confirmar localhost:8080.
+
+2. Confirmar status 200 do modelo e pesos.
+
+3. Confirmar log do Worker.
+
+4. Observar model-loaded.
+
+5. Conferir shape de input.
+
+6. Conferir outputs.
+
+7. Observar tf.memory().
+
+8. Contar scores.
+
+9. Ver labels acima do threshold.
+
+10. Desenhar caixas.
+
+11. Comparar centro e sprite.
+
+12. Reduzir frequência durante o debug.
+
+13. Garantir uma inferência ativa.
+
+
+60. LIMITAÇÕES
+--------------
+
+- modelo não é especializado nos sprites;
+- classe filtrada é kite;
+- CDN usa latest;
+- intervalo não controla backpressure;
+- várias previsões podem consumir várias balas;
+- não há rastreamento;
+- não se escolhe somente a melhor detecção;
+- resize direto distorce proporção;
+- ordem da caixa é assumida;
+- score formatado vira string;
+- Worker não envia erros estruturados;
+- model-loaded não é tratado pela interface;
+- ImageBitmap não é fechado explicitamente;
+- saídas do warmup merecem dispose;
+- não existem testes automatizados;
+- dependências antigas possuem vulnerabilidades;
+- não há medição de FPS e latência.
+
+
+61. MELHORIAS PRIORITÁRIAS
+--------------------------
+
+1. Criar flag inferenceInProgress.
+
+2. Enviar frame somente depois da resposta.
+
+3. Fixar versão do TensorFlow.js.
+
+4. Tratar model-loaded, prediction e error.
+
+5. Escolher a melhor detecção por frame.
+
+6. Aplicar cooldown entre tiros.
+
+7. Fechar ImageBitmap.
+
+8. Descartar saídas do warmup.
+
+9. Adicionar letterbox.
+
+10. Confirmar ordem da caixa.
+
+11. Desenhar caixas.
+
+12. Medir latência e FPS.
+
+13. Criar testes.
+
+14. Treinar detector específico.
+
+15. Modernizar dependências em etapas.
+
+
+62. BACKPRESSURE
+----------------
+
+Estratégia:
+
+thread principal:
+    se ocupado, não capturar;
+    marcar ocupado;
+    enviar frame;
+
+Worker:
+    inferir;
+    responder;
+
+thread principal:
+    marcar livre.
+
+Outra opção é manter apenas o frame mais recente.
+
+Em tempo real, uma previsão atual vale mais que uma fila de previsões antigas.
+
+
+63. MELHOR DETECÇÃO
+-------------------
+
+O código envia toda detecção aceita.
+
+Se houver três alvos:
+
+- três mensagens;
+- três movimentos;
+- possivelmente três tiros.
+
+Critérios possíveis:
+
+- maior score;
+- maior caixa;
+- mais perto do centro;
+- alvo ainda não atingido;
+- trajetória mais estável.
+
+Fluxo:
+
+filtrar -> ordenar -> escolher uma -> disparar
+
+
+64. DETECÇÃO E RASTREAMENTO
+---------------------------
+
+Detecção:
+
+Onde está o objeto neste frame?
+
+Rastreamento:
+
+É o mesmo objeto do frame anterior e para onde está indo?
+
+Vantagens do rastreamento:
+
+- menos inferências;
+- mira suave;
+- estimativa de velocidade;
+- antecipação;
+- evitar tiros repetidos.
+
+
+65. MODELO CUSTOMIZADO
+----------------------
+
+Para detectar os patos:
+
+1. coletar screenshots;
+2. desenhar caixas;
+3. criar classe duck;
+4. separar treino, validação e teste;
+5. treinar detector;
+6. avaliar;
+7. exportar;
+8. converter para TensorFlow.js;
+9. substituir modelo e labels;
+10. medir no navegador.
+
+Incluir:
+
+- patos vermelhos e pretos;
+- direções diferentes;
+- tamanhos diferentes;
+- frames de animação;
+- fundos;
+- imagens sem pato.
+
+
+66. MÉTRICAS
+------------
+
+PRECISION
+    quantas detecções estavam corretas;
+
+RECALL
+    quantos alvos foram encontrados;
+
+IOU
+    sobreposição entre caixa prevista e real;
+
+MAP
+    desempenho médio de detecção;
+
+LATÊNCIA
+    tempo da captura até a resposta;
+
+FPS
+    frames processados por segundo;
+
+HIT RATE
+    tiros automáticos que acertam.
+
+Precisão e velocidade precisam ser avaliadas juntas.
+
+
+67. TESTES FUTUROS
+------------------
+
+PREPROCESSAMENTO
+
+- shape final;
+- valores entre 0 e 1;
+- três canais;
+- descarte.
+
+PÓS-PROCESSAMENTO
+
+- ignora score baixo;
+- ignora classe errada;
+- converte coordenadas;
+- calcula centro;
+- nenhuma detecção;
+- várias detecções.
+
+PROTOCOLO
+
+- predict;
+- model-loaded;
+- prediction;
+- error.
+
+INTEGRAÇÃO
+
+- imagem conhecida;
+- caixa esperada;
+- tolerância;
+- somente um clique.
+
+
+68. SEGURANÇA E REPRODUTIBILIDADE
+---------------------------------
+
+- fixar versão do CDN;
+- usar modelos confiáveis;
+- versionar modelo, pesos e labels juntos;
+- registrar versão;
+- documentar licença;
+- revisar source maps no deploy;
+- revisar dependências;
+- servir com cabeçalhos adequados.
+
+Modelo, pós-processamento e labels formam uma unidade.
+
+
+69. GLOSSÁRIO
+-------------
+
+BACKPRESSURE
+    controle da quantidade de trabalho pendente.
+
+BATCH
+    exemplos processados juntos.
+
+BOUNDING BOX
+    retângulo que envolve o objeto.
+
+CANVAS
+    superfície de desenho.
+
+CLASSE
+    categoria prevista.
+
+COCO
+    conjunto de dados de visão computacional.
+
+CONFIANÇA
+    score da previsão.
+
+DETECÇÃO
+    classe e localização.
+
+DISPOSE
+    liberação de tensor.
+
+FRAME
+    imagem de uma sequência.
+
+GENERATOR
+    função que produz valores com yield.
+
+GRAPHMODEL
+    grafo carregado pelo TensorFlow.js.
+
+IMAGEBITMAP
+    bitmap eficiente do navegador.
+
+INFERÊNCIA
+    uso de modelo treinado.
+
+IOU
+    sobreposição entre caixas.
+
+LETTERBOX
+    resize com proporção preservada e padding.
+
+PIXEL
+    unidade de imagem raster.
+
+PÓS-PROCESSAMENTO
+    interpretação da saída bruta.
+
+SCORE
+    confiança numérica.
+
+SHARD
+    parte dos pesos.
+
+TENSOR
+    estrutura numérica multidimensional.
+
+TRANSFERABLE
+    recurso transferido entre contextos.
+
+WARMUP
+    execução de aquecimento.
+
+WEB WORKER
+    contexto separado da interface.
+
+YOLO
+    família de detectores.
+
+
+70. MAPA MENTAL
+---------------
+
+JOGO
+    |
+    |-- PixiJS
+    |-- Stage
+    |-- patos
+    |-- mira
+    `-- handleClick
+          |
+          v
+CAPTURA
+    |
+    |-- extract.canvas
+    `-- createImageBitmap
+          |
+          v
+TRANSFERÊNCIA
+    |
+    |-- postMessage
+    `-- transfer list
+          |
+          v
+WORKER
+    |
+    |-- TensorFlow.js
+    |-- labels
+    |-- GraphModel
+    `-- warmup
+          |
+          v
+PRÉ-PROCESSAMENTO
+    |
+    |-- fromPixels
+    |-- resize 640 x 640
+    |-- dividir por 255
+    `-- batch
+          |
+          v
+INFERÊNCIA
+    |
+    |-- boxes
+    |-- scores
+    `-- classes
+          |
+          v
+PÓS-PROCESSAMENTO
+    |
+    |-- threshold 0.4
+    |-- kite
+    |-- pixels
+    `-- centro
+          |
+          v
+AUTOMAÇÃO
+    |
+    |-- HUD
+    |-- mira
+    |-- posição global
+    `-- disparo
+
+
+71. CHECKLIST DE EXECUÇÃO
+-------------------------
+
+[ ] Entrar na pasta correta.
+[ ] Executar npm install.
+[ ] Executar npm run lint.
+[ ] Executar npm run build.
+[ ] Executar npm start.
+[ ] Abrir localhost:8080.
+[ ] Conferir arquivos do modelo na aba Network.
+[ ] Conferir Worker inicializado.
+[ ] Esperar modelo carregar.
+[ ] Verificar HUD de previsão.
+[ ] Confirmar movimento da mira.
+[ ] Confirmar que os tiros usam handleClick().
+[ ] Observar desempenho e console.
+
+
+72. CHECKLIST AO TROCAR O MODELO
+--------------------------------
+
+[ ] Atualizar model.json.
+[ ] Atualizar todos os shards.
+[ ] Atualizar labels.json.
+[ ] Confirmar licença.
+[ ] Confirmar shape da entrada.
+[ ] Confirmar tamanho esperado.
+[ ] Confirmar normalização.
+[ ] Confirmar ordem dos outputs.
+[ ] Confirmar ordem das coordenadas.
+[ ] Confirmar se caixas são normalizadas.
+[ ] Confirmar necessidade de NMS.
+[ ] Atualizar classe filtrada.
+[ ] Atualizar threshold.
+[ ] Atualizar CopyWebpackPlugin.
+[ ] Medir memória.
+[ ] Medir latência.
+[ ] Testar imagens conhecidas.
+
+
+73. CHECKLIST DE MEMÓRIA
+------------------------
+
+[ ] Intermediários dentro de tf.tidy().
+[ ] Input descartado após inferência.
+[ ] Todos os outputs descartados.
+[ ] Saídas do warmup descartadas.
+[ ] ImageBitmap fechado após uso.
+[ ] Sem referências antigas em arrays.
+[ ] tf.memory() estável após vários ciclos.
+[ ] Apenas uma inferência ativa quando necessário.
+[ ] Frames antigos descartados.
+
+
+74. CHECKLIST DE COORDENADAS
+----------------------------
+
+[ ] Ordem da caixa confirmada.
+[ ] x multiplicado pela largura.
+[ ] y multiplicado pela altura.
+[ ] Padding do letterbox considerado.
+[ ] Centro da caixa calculado.
+[ ] Espaço da captura identificado.
+[ ] Escala do Stage identificada.
+[ ] Mira recebe coordenadas corretas.
+[ ] getGlobalPosition() usado antes de handleClick().
+[ ] Teste visual com caixa desenhada.
+
+
+75. O QUE FOI APRENDIDO
+-----------------------
+
+[x] Entender visão computacional.
+[x] Diferenciar classificação de detecção.
+[x] Usar modelo pré-treinado.
+[x] Carregar GraphModel.
+[x] Entender model.json e shards.
+[x] Carregar labels.
+[x] Criar Web Worker.
+[x] Diferenciar Worker clássico e módulo.
+[x] Criar protocolo com postMessage.
+[x] Capturar canvas do PixiJS.
+[x] Criar ImageBitmap.
+[x] Transferir bitmap sem cópia desnecessária.
+[x] Converter pixels em tensor.
+[x] Redimensionar para 640 x 640.
+[x] Normalizar para 0 até 1.
+[x] Adicionar dimensão de batch.
+[x] Aquecer o modelo.
+[x] Executar inferência assíncrona.
+[x] Ler boxes, scores e classes.
+[x] Aplicar threshold.
+[x] Filtrar classe.
+[x] Converter caixa para pixels.
+[x] Calcular centro.
+[x] Usar generator e yield.
+[x] Liberar tensores.
+[x] Atualizar HUD.
+[x] Posicionar mira.
+[x] Transformar previsão em disparo.
+[x] Empacotar Worker e modelo com Webpack.
+[x] Corrigir todo o ESLint.
+[x] Compilar as três versões.
+[x] Reconhecer limitações e melhorias.
+
+
+76. DIFERENÇA CENTRAL ENTRE AS AULAS 2 E 3
+------------------------------------------
+
+AULA 2
+
+- criamos features tabulares;
+- treinamos rede neural;
+- previmos interesse em produto;
+- integramos PostgreSQL e pgvector;
+- resultado era ranking.
+
+AULA 3
+
+- usamos pixels;
+- carregamos detector pré-treinado;
+- executamos inferência;
+- localizamos objeto;
+- resultado é coordenada espacial.
+
+Em ambas:
+
+- entrada precisa ser transformada;
+- modelo espera formato exato;
+- memória precisa ser cuidada;
+- resultado bruto precisa de regras;
+- interface precisa tratar assincronicidade;
+- medição é indispensável.
+
+
+77. RESUMO FINAL
+----------------
+
+Começamos com um jogo tradicional controlado por cliques.
+
+Criamos uma ponte entre o jogo e a IA:
+
+- PixiJS produz a cena;
+- o canvas vira ImageBitmap;
+- o bitmap é transferido;
+- o Worker mantém a inferência fora da interface;
+- TensorFlow.js carrega o YOLOv5n;
+- o frame vira tensor;
+- o modelo produz caixas, scores e classes;
+- o código escolhe scores acima de 40%;
+- apenas kite é aceito;
+- a caixa volta para pixels;
+- seu centro vira x e y;
+- o HUD mostra a previsão;
+- a mira recebe a posição;
+- handleClick transforma a previsão em tiro.
+
+Também elevamos a qualidade do projeto:
+
+- ESLint moderno;
+- cobertura de todo JavaScript próprio;
+- ambientes corretos;
+- Worker clássico compatível;
+- método duplicado removido;
+- sintaxe e estilo corrigidos;
+- comentários preservados;
+- três builds validados.
+
+A maior lição é que usar IA em uma aplicação não termina em model.predict().
+
+É necessário cuidar de:
+
+- aquisição da entrada;
+- pré-processamento;
+- execução;
+- pós-processamento;
+- coordenadas;
+- concorrência;
+- memória;
+- integração;
+- observabilidade;
+- experiência em tempo real.
+
+
+78. FRASE CENTRAL PARA LEMBRAR
+------------------------------
+
+"Um modelo de visão não joga sozinho: o sistema precisa transformar a cena em
+pixels, os pixels em tensores, as saídas em coordenadas e as coordenadas em uma
+ação válida, no tempo certo e sem travar a aplicação."
+
+
+FIM DA REFERÊNCIA DA AULA 3
+===========================
