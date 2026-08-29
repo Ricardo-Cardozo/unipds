@@ -9,6 +9,7 @@ export const events = {
     modelProgressUpdate: 'model:progress-update',
     recommendationsReady: 'recommendations:ready',
     recommend: 'recommend',
+    modelError: 'model:error',
 }
 
 export const workerEvents = {
@@ -19,4 +20,5 @@ export const workerEvents = {
     progressUpdate: 'progress:update',
     tfVisData: 'tfvis:data',
     tfVisLogs: 'tfvis:logs',
+    error: 'worker:error',
 }

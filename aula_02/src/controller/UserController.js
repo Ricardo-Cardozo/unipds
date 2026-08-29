@@ -17,10 +17,10 @@ export class UserController {
     }
 
     async renderUsers(nonTrainedUser) {
-        const users = await this.#userService.getDefaultUsers();
+        await this.#userService.getDefaultUsers();
 
-        this.#userService.addUser(nonTrainedUser);
-        const defaultAndNonTrained = [nonTrainedUser, ...users];
+        if (nonTrainedUser) await this.#userService.addUser(nonTrainedUser);
+        const defaultAndNonTrained = await this.#userService.getUsers();
 
         this.#userView.renderUserOptions(defaultAndNonTrained);
         this.setupCallbacks();
@@ -52,16 +52,24 @@ export class UserController {
     }
 
     async handlePurchaseAdded({ user, product }) {
-        const updatedUser = await this.#userService.getUserById(user.id);
-        updatedUser.purchases.push({
-            ...product
-        })
+        const userBeforePurchase = await this.#userService.getUserById(user.id);
+        const alreadyPurchased = userBeforePurchase.purchases.some(item => {
+            return item.id === product.id;
+        });
+        const updatedUser = await this.#userService.addPurchase(user.id, product.id);
 
-        await this.#userService.updateUser(updatedUser);
+        const lastPurchase = updatedUser.purchases.find(item => item.id === product.id);
+        if (!alreadyPurchased) this.#userView.addPastPurchase(lastPurchase);
+        const updatedUsers = await this.#userService.getUsers();
+        this.#events.dispatchUsersUpdated({ users: updatedUsers });
 
-        const lastPurchase = updatedUser.purchases[updatedUser.purchases.length - 1];
-        this.#userView.addPastPurchase(lastPurchase);
-        this.#events.dispatchUsersUpdated({ users: await this.#userService.getUsers() });
+        // Nova compra é feedback positivo novo. O treino é solicitado com o
+        // retrato mais recente do PostgreSQL; o WorkerController evita concorrência.
+        this.#events.dispatchTrainModel(updatedUsers);
+
+        // Atualiza o usuário selecionado e dispara uma nova recomendação.
+        // Assim o produto recém-comprado desaparece imediatamente da vitrine.
+        this.#events.dispatchUserSelected(updatedUser);
     }
 
     async handlePurchaseRemove({ userId, product }) {
@@ -70,10 +78,12 @@ export class UserController {
 
         if (index !== -1) {
             user.purchases.splice(index, 1); // directly remove one item at the found index
-            await this.#userService.updateUser(user);
+            const updatedUser = await this.#userService.removePurchase(userId, product.id);
 
             const updatedUsers = await this.#userService.getUsers();
             this.#events.dispatchUsersUpdated({ users: updatedUsers });
+            this.#events.dispatchTrainModel(updatedUsers);
+            this.#events.dispatchUserSelected(updatedUser);
         }
     }
 

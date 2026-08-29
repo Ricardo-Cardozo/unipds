@@ -2,11 +2,15 @@
     "name": "ecommerce-recomendations-with-ml",
     "version": "1.0.0",
     "description": "An e-commerce recommendation system with TensorFlow.js",
-    "main": "index.js",
+    "main": "server.js",
     "type": "module",
     "scripts": {
-        "start": "browser-sync -w . --server --files 'index.html, data/*.json, src/**/*.js, src/**/*.html, style.css' --port 3000",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "db:start": "docker compose up -d database",
+        "db:stop": "docker compose down",
+        "start": "node server.js",
+        "dev": "node --watch server.js",
+        "start:static": "browser-sync -w . --server --files 'index.html, data/*.json, src/**/*.js, src/**/*.html, style.css' --port 3100",
+        "test": "node --check server.js && node --check src/workers/modelTrainingWorker.js"
     },
     "keywords": [
         "ecommerce",
@@ -16,6 +20,10 @@
     ],
     "author": "",
     "license": "ISC",
+    "dependencies": {
+        "express": "^5.1.0",
+        "pg": "^8.16.3"
+    },
     "devDependencies": {
         "browser-sync": "^3.0.4"
     }

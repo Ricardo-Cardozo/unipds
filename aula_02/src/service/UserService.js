@@ -1,47 +1,58 @@
 export class UserService {
-    #storageKey = 'ew-academy-users';
-
+    // O nome do método foi preservado para acompanhar a evolução da aula.
+    // Agora os usuários padrão são seeds do PostgreSQL, não dados do JSON.
     async getDefaultUsers() {
-        const response = await fetch('./data/user.json');
-        const users = await response.json();
-        this.#setStorage(users);
-
-        return users;
+        return this.getUsers();
     }
 
     async getUsers() {
-        const users = this.#getStorage();
-        return users;
+        return this.#request('/api/users');
     }
 
     async getUserById(userId) {
-        const users = this.#getStorage();
-        return users.find(user => user.id === userId);
+        return this.#request(`/api/users/${userId}`);
     }
 
     async updateUser(user) {
-        const users = this.#getStorage();
-        const userIndex = users.findIndex(u => u.id === user.id);
-
-        users[userIndex] = { ...users[userIndex], ...user };
-        this.#setStorage(users);
-
-        return users[userIndex];
+        return this.#request(`/api/users/${user.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: user.name, age: user.age })
+        });
     }
 
     async addUser(user) {
-        const users = this.#getStorage();
-        this.#setStorage([user, ...users]);
+        return this.#request('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user)
+        });
     }
 
-    #getStorage() {
-        const data = sessionStorage.getItem(this.#storageKey);
-        return data ? JSON.parse(data) : [];
+    async addPurchase(userId, productId) {
+        return this.#request(`/api/users/${userId}/purchases`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId })
+        });
     }
 
-    #setStorage(data) {
-        sessionStorage.setItem(this.#storageKey, JSON.stringify(data));
+    async removePurchase(userId, productId) {
+        return this.#request(`/api/users/${userId}/purchases/${productId}`, {
+            method: 'DELETE'
+        });
     }
 
+    // Centralizar o tratamento evita que um erro HTTP seja confundido com uma
+    // resposta válida e facilita enxergar problemas do banco durante a aula.
+    async #request(url, options) {
+        const response = await fetch(url, options);
+        const data = await response.json();
 
+        if (!response.ok) {
+            throw new Error(data.detail || data.message || response.statusText);
+        }
+
+        return data;
+    }
 }

@@ -1,0 +1,6 @@
+node_modules/
+.env
+npm-debug.log*
+# O ambiente possui uma regra global que ignora lockfiles, mas neste projeto o
+# package-lock.json é intencional: ele torna a instalação da aula reproduzível.
+!package-lock.json

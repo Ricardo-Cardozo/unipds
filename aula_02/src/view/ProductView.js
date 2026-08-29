@@ -29,12 +29,25 @@ export class ProductView extends View {
     render(products, disableButtons = true) {
         if (!this.#productTemplate) return;
         const html = products.map(product => {
+            const score = Number(product.score);
+            const recommendationDetails = Number.isFinite(score)
+                ? `
+                    <div class="recommendation-explanation">
+                        <span class="recommendation-score">
+                            Score híbrido: ${score.toFixed(3)}
+                        </span>
+                        <small>${product.reason || 'Compatível com seu perfil.'}</small>
+                    </div>
+                `
+                : '';
+
             return this.replaceTemplate(this.#productTemplate, {
                 id: product.id,
                 name: product.name,
                 category: product.category,
                 price: product.price,
                 color: product.color,
+                recommendationDetails,
                 product: JSON.stringify(product)
             });
         }).join('');

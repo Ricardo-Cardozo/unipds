@@ -1,7 +1,15 @@
 export class ProductService {
     async getProducts() {
-        const response = await fetch('./data/products.json');
-        return await response.json();
+        // O catálogo agora vem da mesma fonte de verdade usada pelas compras e
+        // pelos vetores; o JSON permanece apenas como referência histórica.
+        const response = await fetch('/api/products');
+        const products = await response.json();
+
+        if (!response.ok) {
+            throw new Error(products.detail || products.message || response.statusText);
+        }
+
+        return products;
     }
 
     async getProductById(id) {

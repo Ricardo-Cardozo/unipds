@@ -11,3 +11,9 @@ https://mlu-explain.github.io/neural-networks/
 https://github.com/aws-samples/aws-mlu-explain
 https://medium.com/analytics-vidhya/awesome-machine-learning-visualizations-5208f1617ec5
 https://nitaiaharoni1.medium.com/introducing-vector-storage-a-lightweight-vector-database-for-the-browser-bc10775fd9dd
+
+# Banco vetorial usado na evolução da Aula 2
+https://github.com/pgvector/pgvector
+https://github.com/pgvector/pgvector?tab=readme-ov-file#docker
+https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
+https://github.com/pgvector/pgvector?tab=readme-ov-file#hnsw

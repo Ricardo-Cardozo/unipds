@@ -58,6 +58,12 @@ export class ModelView extends View {
             this.#trainModelBtn.innerHTML = 'Train Recommendation Model';
         }
     }
+    showTrainingError(message) {
+        this.#trainModelBtn.disabled = false;
+        this.#trainModelBtn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Try Training Again';
+        this.#trainModelBtn.title = message;
+        console.error('Recommendation model error:', message);
+    }
 
     renderAllUsersPurchases(users) {
         const html = users.map(user => {

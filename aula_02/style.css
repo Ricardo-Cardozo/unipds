@@ -42,6 +42,26 @@ body {
     margin-top: auto;
 }
 
+.recommendation-explanation {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 14px;
+    padding: 10px;
+    border-radius: 8px;
+    background: #eef5ff;
+    color: #24364b;
+}
+
+.recommendation-score {
+    width: fit-content;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #0d6efd;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
 #productList .col-md-3 {
     margin-bottom: 20px;
 }

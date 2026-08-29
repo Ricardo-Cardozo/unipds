@@ -1,0 +1,2139 @@
+AULA 02 — SISTEMA DE RECOMENDAÇÃO COM TENSORFLOW.JS,
+POSTGRESQL E PGVECTOR
+======================================================================
+
+OBJETIVO DESTA REFERÊNCIA
+-------------------------
+
+Este arquivo registra o conteúdo geral da Aula 2 e a evolução profissional
+realizada depois da aula.
+
+A primeira parte explica o sistema original:
+
+1. O problema de recomendação de produtos.
+2. Como usuários e produtos são transformados em vetores.
+3. Como exemplos positivos e negativos são criados.
+4. Como a rede neural é treinada com TensorFlow.js.
+5. Como o modelo calcula scores.
+6. Como o Web Worker evita bloquear a interface.
+
+A segunda parte explica a evolução:
+
+1. Docker com PostgreSQL e pgvector.
+2. PostgreSQL como fonte única de dados persistentes.
+3. Tabelas relacionais para produtos, usuários e compras.
+4. Persistência de vetores de produtos e usuários.
+5. Busca de candidatos por distância vetorial.
+6. Exclusão garantida de produtos comprados.
+7. Ranking híbrido: rede neural + vetor + popularidade.
+8. Cold start, recência, diversidade e explicações.
+9. Persistência e auditoria dos rankings.
+10. Retreino automático e controle de concorrência.
+11. Correção de target leakage e desbalanceamento.
+12. Liberação de tensores e tratamento de erros.
+
+Fluxo geral atual:
+
+PostgreSQL
+    -> usuários + produtos + compras
+    -> codificação no Web Worker
+    -> vetores no pgvector
+    -> treinamento da rede neural
+    -> busca de candidatos no PostgreSQL
+    -> score neural + similaridade + popularidade
+    -> diversidade e explicação
+    -> ranking validado e salvo no PostgreSQL
+    -> interface
+
+
+1. QUAL É O PROBLEMA DESTA AULA?
+----------------------------------
+
+Temos um pequeno e-commerce com usuários, produtos e histórico de compras.
+
+Queremos responder:
+
+"Entre os produtos ainda não comprados, quais parecem mais relevantes para o
+usuário selecionado e em qual ordem devem aparecer?"
+
+Um recomendador normalmente precisa:
+
+- recuperar candidatos;
+- atribuir score a cada candidato;
+- ordenar os candidatos;
+- aplicar regras de negócio;
+- equilibrar relevância, novidade e diversidade.
+
+
+2. O QUE É UM SISTEMA DE RECOMENDAÇÃO?
+-----------------------------------------
+
+Um sistema de recomendação seleciona itens potencialmente interessantes para
+uma pessoa. Os itens podem ser produtos, filmes, músicas, cursos ou notícias.
+
+Famílias comuns:
+
+Baseada em conteúdo:
+Usa características dos itens, como categoria, cor e preço.
+
+Filtragem colaborativa:
+Usa relações entre comportamentos de vários usuários.
+
+Popularidade:
+Recomenda itens populares quando sabemos pouco sobre a pessoa.
+
+Híbrida:
+Combina várias estratégias.
+
+O sistema atual é híbrido porque combina:
+
+- características dos produtos;
+- compras anteriores;
+- rede neural supervisionada;
+- proximidade vetorial;
+- popularidade com recência;
+- diversidade.
+
+
+3. APRENDIZADO SUPERVISIONADO NO RECOMENDADOR
+---------------------------------------------
+
+Cada exemplo de treino representa um par:
+
+(usuário, produto)
+
+O rótulo informa se o usuário comprou o produto:
+
+1 = comprou
+0 = não existe compra registrada
+
+Exemplos:
+
+(Ana, Fones)   -> 1
+(Ana, Relógio) -> 1
+(Ana, Tênis)  -> 0
+
+O modelo aproxima:
+
+P(compra | perfil do usuário, características do produto)
+
+IMPORTANTE:
+
+Rótulo 0 não prova rejeição. O produto pode nunca ter sido mostrado. Em um
+sistema real, impressões, cliques e carrinho ajudam a interpretar os negativos.
+
+
+4. DADOS ORIGINAIS DA AULA
+--------------------------
+
+A Aula 2 original possuía:
+
+data/products.json
+data/user.json
+
+O navegador carregava os JSONs e armazenava compras novas em sessionStorage.
+
+Esse desenho facilitava o primeiro contato, mas possuía limitações:
+
+- cada aba tinha seu próprio estado;
+- fechar a sessão podia apagar o histórico;
+- produtos eram duplicados dentro dos usuários;
+- não existiam transações;
+- não havia busca vetorial real;
+- rankings não eram persistidos.
+
+Os JSONs continuam no projeto para preservar o material original, mas não
+participam da execução atual.
+
+
+5. POSTGRESQL COMO FONTE ÚNICA DE VERDADE
+-------------------------------------------
+
+Todo estado persistente atual utiliza PostgreSQL:
+
+- produtos;
+- usuários;
+- compras;
+- vetores de produtos;
+- vetores de usuários;
+- execuções do recomendador;
+- rankings e componentes dos scores;
+- explicações.
+
+TensorFlow.js continua no navegador como motor de cálculo. Os resultados
+relevantes voltam para o PostgreSQL.
+
+Não existe fallback para sessionStorage ou JSON. Se o banco falhar, a aplicação
+mostra o erro em vez de misturar estados diferentes.
+
+
+6. MODELO RELACIONAL
+--------------------
+
+Tabelas:
+
+products
+    -> catálogo canônico
+
+users
+    -> dados dos usuários
+
+purchases
+    -> relacionamento de compras
+
+product_vectors
+    -> vetor de cada produto
+
+user_vectors
+    -> vetor atual de cada usuário
+
+recommendation_runs
+    -> uma execução do recomendador
+
+recommendations
+    -> itens, ranks, scores e explicações
+
+Relacionamentos:
+
+users 1 ----- N purchases N ----- 1 products
+users 1 ----- 1 user_vectors
+products 1 -- 1 product_vectors
+users 1 ----- N recommendation_runs
+recommendation_runs 1 ----- N recommendations
+products 1 ---------------- N recommendations
+
+
+7. PRODUCTS, USERS E PURCHASES
+------------------------------
+
+products:
+
+(id, name, category, price, color, active)
+
+active representa disponibilidade lógica. Produto inativo não aparece no
+catálogo, nos candidatos, nas compras nem em rankings atuais.
+
+users:
+
+(id, name, age)
+
+purchases:
+
+(user_id, product_id, purchased_at)
+
+A chave primária de purchases é composta:
+
+(user_id, product_id)
+
+Neste exemplo, ela impede a mesma compra duas vezes. Em um e-commerce real,
+pedidos e itens permitiriam quantidade e recompras.
+
+Foreign keys garantem que compras apontem para usuários e produtos existentes.
+
+
+8. SEEDS INICIAIS
+-----------------
+
+database/init.sql insere dados iniciais de forma idempotente.
+
+O projeto começa com:
+
+- 10 produtos;
+- 6 usuários;
+- 12 compras.
+
+Usuários com histórico:
+
+- Ana Lima;
+- Bruno Ferreira;
+- Camila Souza;
+- Diego Almeida;
+- Eduarda Nunes.
+
+Usuário sem compras:
+
+- Josézin da Silva.
+
+Josézin demonstra cold start.
+
+ON CONFLICT DO NOTHING permite repetir os seeds sem apagar dados posteriores.
+
+
+9. O QUE É UM VETOR?
+----------------------
+
+Vetor é uma lista ordenada de números:
+
+[0.45, 0.60, 1, 0, 0, 0, 1, 0]
+
+Cada posição possui significado fixo. Para comparar vetores corretamente, eles
+precisam ter:
+
+- mesmo tamanho;
+- mesma ordem;
+- mesmo significado por posição;
+- mesma normalização;
+- mesmos pesos.
+
+
+10. FEATURES E PESOS
+--------------------
+
+Features de produto:
+
+- preço;
+- idade média associada ao produto;
+- categoria;
+- cor.
+
+Pesos em WEIGHTS:
+
+categoria = 0.4
+cor       = 0.3
+preço     = 0.2
+idade     = 0.1
+
+Esses pesos são decisões de engenharia didáticas. Em produção, precisam ser
+avaliados com dados e experimentos.
+
+
+11. NORMALIZAÇÃO
+------------------
+
+Preço e idade usam min-max:
+
+normalizado = (valor - mínimo) / (máximo - mínimo)
+
+Exemplo:
+
+preço = 129.99
+mínimo = 39.99
+máximo = 199.99
+
+(129.99 - 39.99) / (199.99 - 39.99) = 0.5625
+
+Aplicando peso 0.2:
+
+0.5625 * 0.2 = 0.1125
+
+A função evita divisão por zero quando máximo e mínimo são iguais.
+
+
+12. ONE-HOT ENCODING
+--------------------
+
+Categorias, na ordem atual:
+
+[
+  "eletrônicos",
+  "vestuário",
+  "calçados",
+  "acessórios"
+]
+
+eletrônicos -> [1, 0, 0, 0]
+vestuário   -> [0, 1, 0, 0]
+calçados    -> [0, 0, 1, 0]
+acessórios   -> [0, 0, 0, 1]
+
+Depois o vetor é multiplicado por 0.4.
+
+Cores atuais:
+
+[
+  "preto", "prata", "azul", "branco",
+  "vermelho", "bege", "cinza", "marrom"
+]
+
+O one-hot de cor possui oito posições e é multiplicado por 0.3.
+
+
+13. AS 14 DIMENSÕES
+--------------------
+
+Ordem:
+
+[
+  preço,               // 1
+  idade,               // 1
+  categorias one-hot,  // 4
+  cores one-hot        // 8
+]
+
+Total:
+
+1 + 1 + 4 + 8 = 14
+
+Por isso o banco usa VECTOR(14) e o servidor valida 14 dimensões.
+
+Nova categoria ou cor pode exigir:
+
+- migration do schema;
+- novo encoder;
+- recálculo dos vetores;
+- novo treinamento.
+
+
+14. VETOR DE PRODUTO
+--------------------
+
+encodeProduct(product, context):
+
+1. Normaliza preço.
+2. Aplica peso do preço.
+3. Obtém idade média normalizada do produto.
+4. Aplica peso da idade.
+5. Codifica categoria e aplica peso.
+6. Codifica cor e aplica peso.
+7. Concatena 14 valores.
+
+Se um produto nunca foi comprado, a feature de idade usa o ponto central entre
+a menor e a maior idade do conjunto.
+
+
+15. VETOR DE USUÁRIO E RECÊNCIA
+--------------------------------
+
+O perfil combina vetores dos produtos comprados. Compras recentes pesam mais:
+
+peso = exp(-idadeEmDias / 180)
+
+Valores aproximados:
+
+hoje        -> 1.000
+90 dias     -> 0.607
+180 dias    -> 0.368
+360 dias    -> 0.135
+
+Vetor final:
+
+soma(vetorDaCompra * peso) / soma(dos pesos)
+
+Isso acompanha mudanças de interesse sem apagar totalmente o passado.
+
+Sem compras, o vetor usa idade normalizada e zeros para preço, categorias e
+cores. A estratégia de cold start compensa a falta de histórico.
+
+
+16. COLD START
+--------------
+
+Cold start ocorre quando sabemos pouco sobre:
+
+- usuário novo;
+- produto novo;
+- sistema novo.
+
+Para usuário novo, este sistema usa:
+
+- popularidade recente;
+- proximidade com vetor inicial;
+- pequena participação da rede neural.
+
+
+17. EXEMPLOS DE TREINAMENTO
+---------------------------
+
+Para cada usuário com compras e cada produto:
+
+entrada = vetor do usuário + vetor do produto
+rótulo = comprou ? 1 : 0
+
+Cada vetor possui 14 dimensões:
+
+14 + 14 = 28 entradas
+
+Com os seeds:
+
+5 usuários com compras * 10 produtos = 50 pares
+
+- 12 positivos;
+- 38 negativos.
+
+Josézin não entra no treino supervisionado porque não possui positivo.
+
+
+18. TARGET LEAKAGE
+------------------
+
+Target leakage acontece quando a resposta aparece indevidamente na entrada.
+
+Problema anterior:
+
+Para prever Tênis, o perfil do usuário incluía o próprio Tênis.
+
+Correção:
+
+Em exemplo positivo, o produto-alvo é removido temporariamente do perfil.
+
+Histórico:
+
+[Fones, Calça, Tênis]
+
+Alvo:
+
+Tênis
+
+Perfil usado:
+
+[Fones, Calça]
+
+O modelo precisa aprender uma relação em vez de encontrar a resposta na entrada.
+
+
+19. DESBALANCEAMENTO DE CLASSES
+-------------------------------
+
+Existem 12 positivos e 38 negativos. O modelo poderia aprender o atalho de
+responder "não compra".
+
+pesoPositivo = negativos / positivos
+
+38 / 12 = aproximadamente 3.17
+
+classWeight:
+
+{
+  0: 1,
+  1: 3.17
+}
+
+O peso é limitado entre 1 e 5.
+
+
+20. TENSORES
+------------
+
+xs = tf.tensor2d(inputs)
+
+Formato:
+
+[50, 28]
+
+ys = tf.tensor2d(labels, [50, 1])
+
+Formato:
+
+[50, 1]
+
+Cada linha de xs corresponde à linha de ys no mesmo índice.
+
+
+21. REDE NEURAL
+---------------
+
+Arquitetura:
+
+entrada 28
+  -> Dense 128 + ReLU
+  -> Dense 64 + ReLU
+  -> Dense 32 + ReLU
+  -> Dense 1 + Sigmoid
+
+A sigmoid produz mlScore entre 0 e 1.
+
+Esse valor não é automaticamente uma probabilidade calibrada do mundo real.
+
+
+22. COMPILAÇÃO E TREINAMENTO
+------------------------------
+
+optimizer = Adam(0.01)
+loss      = binaryCrossentropy
+metrics   = accuracy
+
+Configuração do fit:
+
+epochs    = 100
+batchSize = 32
+shuffle   = true
+classWeight = peso calculado
+
+O Worker envia loss e accuracy a cada época para visualização.
+
+Accuracy isolada pode enganar em dados desbalanceados.
+
+
+23. WEB WORKER
+--------------
+
+modelTrainingWorker.js executa Machine Learning fora da thread principal.
+
+Thread principal:
+
+- interface;
+- cliques;
+- eventos;
+- renderização.
+
+Worker:
+
+- contexto e vetores;
+- sincronização com pgvector;
+- treinamento;
+- busca de candidatos;
+- predict;
+- ranking;
+- persistência do resultado.
+
+Comunicação ocorre com postMessage.
+
+
+24. POR QUE POSTGRESQL + PGVECTOR?
+---------------------------------
+
+PostgreSQL fornece:
+
+- integridade relacional;
+- transações;
+- JOINs;
+- constraints;
+- JSONB.
+
+pgvector adiciona:
+
+- tipo vector;
+- operadores de distância;
+- busca por vizinhos;
+- índices vetoriais.
+
+Assim, dados relacionais e vetoriais ficam no mesmo sistema.
+
+
+25. EXTENSÃO E COLUNAS VECTOR
+-----------------------------
+
+Ativação:
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+Colunas:
+
+product_vectors.embedding VECTOR(14)
+user_vectors.embedding VECTOR(14)
+
+O servidor valida tamanho e números finitos antes do SQL.
+
+
+26. SINCRONIZAÇÃO DOS VETORES DE PRODUTOS
+------------------------------------------
+
+Endpoint:
+
+POST /api/vector-products/sync
+
+O cliente envia ID e vetor. O servidor recupera nome e metadata da tabela
+products, evitando transformar o navegador em outra fonte de catálogo.
+
+A operação usa:
+
+BEGIN
+  -> INSERT ou UPDATE dos vetores
+  -> remoção de vetores fora do catálogo
+COMMIT
+
+Em erro:
+
+ROLLBACK
+
+ON CONFLICT realiza UPSERT: insere se não existe e atualiza se existe.
+
+
+27. VETOR PERSISTIDO DO USUÁRIO
+--------------------------------
+
+Endpoint:
+
+PUT /api/users/:userId/vector
+
+Tabela user_vectors:
+
+(user_id, embedding, purchase_count, updated_at)
+
+Antes da recomendação, o Worker:
+
+1. recebe o usuário atualizado do PostgreSQL;
+2. cria seu vetor;
+3. salva em user_vectors;
+4. solicita candidatos usando apenas userId.
+
+O banco consulta vetor e compras. Não confia em uma lista de exclusão enviada
+pelo navegador.
+
+
+28. DISTÂNCIA L2
+-----------------
+
+O operador <-> do pgvector representa distância euclidiana.
+
+distância = raiz(
+  (A1 - B1)² +
+  (A2 - B2)² +
+  ...
+)
+
+distância menor = vetores mais próximos
+distância maior = vetores mais distantes
+
+Consulta:
+
+ORDER BY product_vector.embedding <-> user_vector.embedding
+
+
+29. DISTÂNCIA PARA SIMILARIDADE
+--------------------------------
+
+No score, valor maior deve significar melhor. Por isso:
+
+vectorSimilarity = 1 / (1 + distance)
+
+Exemplos:
+
+distância 0   -> similaridade 1
+distância 0.5 -> similaridade 0.667
+distância 1   -> similaridade 0.5
+distância 3   -> similaridade 0.25
+
+
+30. ÍNDICE HNSW
+-----------------
+
+O schema cria:
+
+CREATE INDEX ...
+USING hnsw (embedding vector_l2_ops);
+
+HNSW cria um grafo para busca aproximada por vizinhos.
+
+Com 10 produtos, busca exata bastaria. O índice é didático e prepara o estudo
+de escala.
+
+Trade-offs:
+
+- busca rápida;
+- mais memória;
+- maior custo de construção e atualização;
+- pequena troca potencial de recall por velocidade.
+
+
+31. RECUPERAÇÃO DE CANDIDATOS
+--------------------------------
+
+Endpoint:
+
+POST /api/recommendations/candidates
+
+Entrada:
+
+{
+  "userId": 5,
+  "limit": 200
+}
+
+O servidor limita o máximo a 500.
+
+Etapas SQL:
+
+1. Obtém o vetor do usuário.
+2. Calcula popularidade temporal.
+3. Junta produtos ativos.
+4. Faz anti-join com compras do usuário.
+5. Ordena por distância L2.
+6. Aplica LIMIT.
+
+Esse estágio é candidate retrieval. Ele reduz o catálogo antes do modelo mais
+caro.
+
+
+32. EXCLUSÃO ANTES DO LIMIT
+----------------------------
+
+Se limit = 5 e três dos cinco vizinhos já foram comprados, filtrar depois deixa
+apenas dois candidatos.
+
+Correto:
+
+1. remover comprados;
+2. ordenar restantes;
+3. aplicar LIMIT.
+
+O SQL usa LEFT JOIN em purchases e exige:
+
+own_purchase.product_id IS NULL
+
+Isso funciona como anti-join.
+
+
+33. TRÊS BARREIRAS CONTRA REPETIR COMPRAS
+-----------------------------------------
+
+Primeira — PostgreSQL na recuperação:
+Comprados não viram candidatos.
+
+Segunda — Web Worker:
+IDs comprados são verificados antes de predict.
+
+Terceira — PostgreSQL na persistência:
+O INSERT final usa NOT EXISTS em purchases.
+
+A terceira fecha a corrida:
+
+1. item era candidato;
+2. usuário compra durante o cálculo;
+3. ranking tenta salvar;
+4. banco verifica novamente;
+5. item é rejeitado.
+
+
+34. POPULARIDADE COM RECÊNCIA
+------------------------------
+
+Popularidade simples deixa produtos antigos dominarem para sempre.
+
+O sistema usa meia-vida de 90 dias:
+
+peso = exp(-ln(2) * idadeEmDias / 90)
+
+hoje    -> 1
+90 dias -> 0.5
+180 dias-> 0.25
+
+Os pesos são somados por produto e normalizados pelo maior valor, produzindo
+popularityScore entre 0 e 1.
+
+
+35. SCORE PARA USUÁRIO COM HISTÓRICO
+-------------------------------------
+
+baseScore =
+  mlScore          * 0.70 +
+  vectorSimilarity * 0.25 +
+  popularityScore  * 0.05
+
+Personalização neural e vetorial dominam. Popularidade atua como pequeno sinal
+estabilizador.
+
+
+36. SCORE PARA COLD START
+-------------------------
+
+baseScore =
+  mlScore          * 0.15 +
+  vectorSimilarity * 0.35 +
+  popularityScore  * 0.50
+
+Sem compras, a parte personalizada é fraca. Popularidade recente oferece um
+ponto de partida mais seguro.
+
+
+37. SCORE NÃO É PROBABILIDADE GARANTIDA
+-----------------------------------------
+
+O valor exibido é um índice de ordenação.
+
+"Score híbrido: 0.199"
+
+não significa:
+
+"19,9% de chance real garantida."
+
+Probabilidade exigiria mais dados, conjunto de teste, calibração e validação
+no mundo real.
+
+
+38. DIVERSIDADE
+---------------
+
+Sem diversidade, a lista pode repetir categoria e cor excessivamente.
+
+Fatores atuais:
+
+- 12% por repetição anterior de categoria;
+- 5% por repetição anterior de cor;
+- fator total limitado a 60%.
+
+Penalidade proporcional:
+
+diversityPenalty = baseScore * fatorDeRepetição
+finalScore = baseScore - diversityPenalty
+
+Ser proporcional evita zerar injustamente scores-base pequenos.
+
+
+39. EXPLICAÇÕES
+-----------------
+
+Cold start:
+
+"Popular entre usuários e compatível com seu perfil inicial."
+
+Categoria conhecida:
+
+"Relacionado à categoria eletrônicos do seu histórico."
+
+Descoberta:
+
+"Descoberta diversificada com boa compatibilidade vetorial."
+
+São explicações interpretáveis sobre sinais do ranking, não uma descrição de
+todos os pesos internos da rede.
+
+
+40. PERSISTÊNCIA DOS RANKINGS
+------------------------------
+
+Endpoint:
+
+POST /api/recommendations/runs
+
+recommendation_runs salva:
+
+- usuário;
+- estratégia;
+- versão do modelo;
+- contexto;
+- timestamp.
+
+recommendations salva:
+
+- produto e rank;
+- mlScore;
+- vectorDistance;
+- popularityScore;
+- diversityPenalty;
+- finalScore;
+- reason.
+
+Versão:
+
+tfjs-v2-no-target-leakage
+
+Estratégia:
+
+hybrid-vector-neural-diverse
+
+
+41. RECUPERAR ÚLTIMO RANKING
+-----------------------------
+
+GET /api/users/:userId/recommendations/latest
+
+Ao recuperar, o SQL verifica novamente:
+
+- produto continua ativo?
+- usuário comprou depois do ranking?
+
+O histórico fica auditável, mas a resposta atual respeita elegibilidade atual.
+
+
+42. FLUXO DE UMA COMPRA
+-----------------------
+
+1. Usuário clica em comprar.
+2. ProductController publica purchaseAdded.
+3. UserController busca estado atual.
+4. UserService chama POST /api/users/:id/purchases.
+5. Servidor valida usuário e produto ativo.
+6. PostgreSQL insere em purchases.
+7. ON CONFLICT impede duplicidade.
+8. API devolve histórico atualizado.
+9. Interface atualiza compras.
+10. Usuários são recarregados do banco.
+11. Novo treino é solicitado.
+12. Recomendação fica pendente.
+13. Treino termina.
+14. Vetor atualizado é salvo.
+15. PostgreSQL exclui a compra nova.
+16. Vitrine atualiza sem o produto.
+
+
+43. REMOÇÃO DE COMPRA
+------------------------
+
+DELETE /api/users/:userId/purchases/:productId
+
+Depois da remoção:
+
+- histórico é recarregado;
+- treino é solicitado;
+- vetor do usuário muda;
+- produto volta a ser elegível;
+- novo ranking é calculado.
+
+
+44. RETREINO AUTOMÁTICO
+------------------------
+
+Compra é feedback positivo novo. Remoção altera rótulos.
+
+WorkerController controla:
+
+- isTraining;
+- queuedTrainingUsers;
+- pendingRecommendation.
+
+Se outro treino for pedido durante model.fit, ele não começa em paralelo.
+Somente o estado mais novo é guardado e usado depois do treino atual.
+
+
+45. RECOMENDAÇÕES CONCORRENTES
+--------------------------------
+
+Troca rápida:
+
+Ana -> Eduarda -> Camila
+
+Respostas podem terminar fora de ordem. O sistema usa:
+
+- requestId crescente;
+- latestRecommendationRequestId;
+- isRecommending;
+- pendingRecommendation.
+
+Somente uma inferência roda por vez, a pendência mais nova substitui a anterior
+e resposta antiga não renderiza.
+
+
+46. MEMÓRIA DO TENSORFLOW
+--------------------------
+
+tf.tidy libera tensores temporários.
+
+Depois do treino:
+
+trainData.xs.dispose()
+trainData.ys.dispose()
+
+Antes de substituir modelo:
+
+oldModel.dispose()
+
+Input e prediction da inferência ficam em tf.tidy. Isso evita crescimento
+contínuo de memória.
+
+
+47. ERROS DO WEB WORKER
+-----------------------
+
+Erros de Promise são enviados como:
+
+{
+  type: "worker:error",
+  action,
+  requestId,
+  message,
+  stack
+}
+
+A thread principal libera estados, publica model:error e habilita nova tentativa.
+
+
+48. API NODE.JS
+---------------
+
+server.js:
+
+1. Entrega frontend.
+2. Expõe API para PostgreSQL.
+
+Express implementa HTTP. pg fornece pool de conexões.
+
+Frontend e API na mesma origem evitam configuração de CORS para o Worker.
+
+
+49. ENDPOINTS
+-------------
+
+GET /api/health
+GET /api/products
+
+GET  /api/users
+GET  /api/users/:userId
+POST /api/users
+PUT  /api/users/:userId
+
+POST   /api/users/:userId/purchases
+DELETE /api/users/:userId/purchases/:productId
+
+POST /api/vector-products/sync
+PUT  /api/users/:userId/vector
+
+POST /api/recommendations/candidates
+POST /api/recommendations/runs
+GET  /api/users/:userId/recommendations/latest
+
+
+50. QUERIES PARAMETRIZADAS
+--------------------------
+
+O SQL usa $1, $2, $3 e passa valores separadamente.
+
+Exemplo:
+
+SELECT id FROM products WHERE id = $1
+
+Valores:
+
+[productId]
+
+Isso evita concatenação insegura e ajuda contra SQL injection.
+
+
+51. TRANSAÇÕES
+----------------
+
+BEGIN inicia.
+COMMIT confirma.
+ROLLBACK desfaz.
+
+Sincronização de vetores e persistência de ranking usam transações para não
+deixar dados pela metade.
+
+
+52. DOCKER COMPOSE
+------------------
+
+Arquivo:
+
+compose.yaml
+
+Imagem:
+
+pgvector/pgvector:pg17
+
+Serviço:
+
+database
+
+Container:
+
+aula-02-pgvector
+
+PostgreSQL interno:
+
+5432
+
+Porta no computador:
+
+5434
+
+5434 foi escolhida porque 5432 já era usada por outro projeto.
+
+
+53. CREDENCIAIS LOCAIS
+----------------------
+
+Banco: recommendations
+Usuário: recommendations
+Senha local: recommendations
+
+DATABASE_URL:
+
+postgresql://recommendations:recommendations@localhost:5434/recommendations
+
+Em produção, usar secrets, TLS quando aplicável e permissões restritas.
+
+
+54. VOLUME
+----------
+
+Volume:
+
+pgvector_data
+
+Ele preserva dados quando o container para.
+
+docker compose stop database
+
+para sem apagar.
+
+ATENÇÃO:
+
+docker compose down -v
+
+remove o volume e apaga o banco local.
+
+
+55. SCHEMA IDEMPOTENTE
+----------------------
+
+Docker executa init.sql na primeira criação do volume. Como esse diretório não
+roda de novo em volume antigo, server.js também aplica o schema ao iniciar.
+
+O SQL usa IF NOT EXISTS, ALTER condicional e ON CONFLICT. Isso permite evoluir
+sem apagar dados. Sistemas maiores normalmente usam migrations numeradas.
+
+
+56. COMO EXECUTAR O PROJETO
+---------------------------
+
+Pré-requisitos:
+
+- Node.js instalado;
+- npm instalado;
+- Docker com Docker Compose funcionando;
+- navegador moderno com suporte a Web Worker.
+
+Passo 1: entrar na pasta da aula.
+
+cd aula_02
+
+Passo 2: instalar as dependências do projeto.
+
+npm install
+
+As dependências principais do backend são Express e o driver pg. TensorFlow.js
+e tfjs-vis continuam sendo carregados no navegador.
+
+Passo 3: iniciar apenas o PostgreSQL com pgvector.
+
+npm run db:start
+
+Esse script executa:
+
+docker compose up -d database
+
+Passo 4: iniciar a API e o frontend.
+
+npm start
+
+Passo 5: abrir no navegador.
+
+http://localhost:3100
+
+Passo 6: conferir a saúde do banco e da extensão.
+
+http://localhost:3100/api/health
+
+A resposta deve indicar status "ok" e informar a versão da extensão vector.
+
+Para encerrar o servidor Node.js, usar Ctrl+C. Para parar o container:
+
+npm run db:stop
+
+Esse comando não usa -v, portanto o volume e os dados são preservados.
+
+
+57. ENTRANDO NO POSTGRESQL
+--------------------------
+
+Com o container em execução:
+
+docker compose exec database psql -U recommendations -d recommendations
+
+Comandos úteis do psql:
+
+\dt
+    lista as tabelas;
+
+\d products
+    descreve a tabela products;
+
+\d product_vectors
+    mostra inclusive a coluna VECTOR(14);
+
+\dx
+    lista extensões instaladas;
+
+\q
+    sai do psql.
+
+É importante diferenciar:
+
+- comandos iniciados por barra invertida pertencem ao psql;
+- comandos SELECT, INSERT, UPDATE e DELETE pertencem ao SQL;
+- todo comando SQL deve terminar com ponto e vírgula.
+
+
+58. CONSULTAS SQL PARA ESTUDO E AUDITORIA
+-----------------------------------------
+
+Listar produtos:
+
+SELECT id, name, category, color, price, active
+FROM products
+ORDER BY id;
+
+Listar usuários:
+
+SELECT id, name, age, created_at
+FROM users
+ORDER BY id;
+
+Ver o histórico com nomes:
+
+SELECT
+    u.name AS usuario,
+    p.name AS produto,
+    pu.purchased_at
+FROM purchases pu
+JOIN users u ON u.id = pu.user_id
+JOIN products p ON p.id = pu.product_id
+ORDER BY pu.purchased_at DESC;
+
+Contar vetores de produtos:
+
+SELECT COUNT(*) AS total
+FROM product_vectors;
+
+Inspecionar os vetores dos usuários:
+
+SELECT user_id, purchase_count, embedding, updated_at
+FROM user_vectors
+ORDER BY user_id;
+
+Confirmar pgvector:
+
+SELECT extname, extversion
+FROM pg_extension
+WHERE extname = 'vector';
+
+Ver as execuções mais recentes:
+
+SELECT id, user_id, strategy, model_version, context, created_at
+FROM recommendation_runs
+ORDER BY id DESC;
+
+Auditar os componentes do score:
+
+SELECT
+    run_id,
+    rank,
+    product_id,
+    ml_score,
+    vector_distance,
+    popularity_score,
+    diversity_penalty,
+    final_score,
+    reason
+FROM recommendations
+ORDER BY run_id DESC, rank;
+
+Essas consultas fazem o recomendador deixar de ser uma caixa-preta completa.
+Podemos observar o que entrou, o que saiu e por que a ordem foi escolhida.
+
+
+59. CONSULTA DE INTEGRIDADE: NUNCA RECOMENDAR O QUE JÁ FOI COMPRADO
+------------------------------------------------------------------
+
+Esta consulta procura qualquer recomendação inválida:
+
+SELECT
+    rr.id AS run_id,
+    rr.user_id,
+    r.product_id,
+    p.name
+FROM recommendation_runs rr
+JOIN recommendations r ON r.run_id = rr.id
+JOIN purchases pu
+  ON pu.user_id = rr.user_id
+ AND pu.product_id = r.product_id
+JOIN products p ON p.id = r.product_id;
+
+Resultado esperado:
+
+0 linhas
+
+Se retornar alguma linha, existe uma violação da regra de negócio e o fluxo deve
+ser investigado. Esse tipo de query também pode virar um teste automatizado.
+
+
+60. O CASO DO TÊNIS E DA CALÇA
+------------------------------
+
+O problema relatado foi:
+
+"Comprei Tênis e Calça, mas o sistema continua recomendando Tênis e Calça."
+
+Por que isso podia acontecer em um sistema simples?
+
+- o modelo atribui score alto justamente a itens parecidos com o histórico;
+- o estado do navegador pode ficar diferente do estado usado no treino;
+- o filtro pode ser aplicado tarde demais;
+- uma compra pode acontecer enquanto a recomendação está sendo calculada;
+- o ranking antigo pode continuar aparecendo na tela.
+
+Como a versão atual resolve:
+
+1. a compra é salva no PostgreSQL;
+2. a busca de candidatos consulta purchases diretamente;
+3. o anti-join elimina Tênis e Calça antes do LIMIT;
+4. o Worker repete a exclusão localmente;
+5. o INSERT do ranking usa NOT EXISTS como validação final;
+6. a compra solicita novo treinamento;
+7. somente a solicitação mais recente pode atualizar a interface.
+
+Lição:
+
+Uma recomendação forte não substitui uma regra de negócio. Produtos comprados
+podem continuar sendo semelhantes ao perfil, mas precisam ser inelegíveis.
+
+
+61. TESTES PRÁTICOS REALIZADOS
+------------------------------
+
+A evolução foi validada em um navegador real, usando o PostgreSQL real da aula.
+
+Casos verificados:
+
+- carregamento de produtos e usuários pelo banco;
+- conexão da API com a extensão pgvector;
+- treinamento e recomendação para usuário com histórico;
+- usuário sem compras, acionando o comportamento de cold start;
+- usuário que já comprou Tênis, Calça e outro produto;
+- ausência desses produtos nos candidatos e no ranking persistido;
+- compra pela interface seguida de retreino;
+- remoção de compra seguida de retreino;
+- trocas rápidas de usuário sem resultado antigo sobrescrever o novo;
+- produto inativo fora do catálogo e da recomendação;
+- persistência de recommendation_runs e recommendations;
+- ausência de rankings persistidos contendo compras do próprio usuário.
+
+Também existe o comando de checagem sintática:
+
+npm test
+
+Ele valida server.js e modelTrainingWorker.js com node --check. Esse teste não
+substitui testes de comportamento, mas encontra erros básicos de JavaScript.
+
+
+62. RECUPERAÇÃO E RANKING SÃO ETAPAS DIFERENTES
+-----------------------------------------------
+
+Um sistema de recomendação profissional costuma trabalhar em dois estágios.
+
+ESTÁGIO 1 - RECUPERAÇÃO
+
+Objetivo:
+
+Reduzir rapidamente um catálogo grande para um conjunto menor de candidatos.
+
+Nesta aula:
+
+- PostgreSQL;
+- pgvector;
+- distância L2;
+- filtros de compra e produto ativo;
+- limite de candidatos.
+
+ESTÁGIO 2 - RANKING
+
+Objetivo:
+
+Ordenar os candidatos com uma lógica mais rica e mais cara.
+
+Nesta aula:
+
+- score da rede neural;
+- similaridade vetorial;
+- popularidade temporal;
+- estratégia diferente para cold start;
+- penalidade de diversidade;
+- explicação do resultado.
+
+Vantagem:
+
+O modelo não precisa avaliar cada item do catálogo. Ele trabalha apenas sobre os
+candidatos que sobreviveram aos filtros e à recuperação vetorial.
+
+
+63. RESPONSABILIDADE DE CADA TECNOLOGIA
+---------------------------------------
+
+POSTGRESQL
+
+- fonte única de produtos, usuários e compras;
+- garante relacionamentos e restrições;
+- persiste vetores;
+- exclui itens inelegíveis;
+- persiste rankings e auditoria;
+- executa transações e UPSERTs.
+
+PGVECTOR
+
+- adiciona o tipo VECTOR(14);
+- calcula distância entre vetores;
+- permite índice HNSW;
+- ajuda a recuperar vizinhos semelhantes.
+
+TENSORFLOW.JS
+
+- cria e treina a rede neural;
+- aprende com exemplos de compra e não compra;
+- produz o mlScore para cada candidato.
+
+WEB WORKER
+
+- mantém o trabalho pesado fora da thread da interface;
+- coordena treino, vetores, candidatos e persistência do ranking;
+- comunica progresso, sucesso e falha.
+
+NODE.JS + EXPRESS
+
+- entrega os arquivos do frontend;
+- valida as requisições;
+- executa SQL parametrizado;
+- controla transações;
+- devolve JSON para o navegador.
+
+INTERFACE
+
+- escolhe o usuário;
+- mostra histórico e catálogo;
+- permite comprar ou remover compra;
+- apresenta recomendações e status do treinamento.
+
+
+64. ESTRUTURA DO PROJETO
+------------------------
+
+aula_02/
+|-- compose.yaml
+|-- server.js
+|-- index.html
+|-- style.css
+|-- package.json
+|-- package-lock.json
+|-- .env.example
+|-- database/
+|   `-- init.sql
+|-- data/
+|   |-- products.json
+|   `-- user.json
+`-- src/
+    |-- index.js
+    |-- controller/
+    |-- events/
+    |-- service/
+    |-- view/
+    |   `-- templates/
+    `-- workers/
+        `-- modelTrainingWorker.js
+
+Observação importante:
+
+Os JSONs foram preservados como material histórico da aula original. A execução
+atual não os utiliza como banco nem como fallback. Tudo passa pelo PostgreSQL.
+
+
+65. ORGANIZAÇÃO EM CAMADAS
+--------------------------
+
+SERVICE
+
+Concentra comunicação com a API. Exemplo: UserService busca usuários, cria ou
+atualiza perfis e registra compras.
+
+CONTROLLER
+
+Coordena ações da tela, serviços e eventos. Ele não deve conhecer detalhes de
+SQL, pois essa responsabilidade está no backend.
+
+VIEW
+
+Renderiza dados e captura interações do usuário. A View não deve decidir sozinha
+qual produto é recomendável.
+
+WORKER
+
+Cuida do treinamento e do pipeline de recomendação sem travar a interface.
+
+SERVER
+
+Valida entrada, aplica regras que precisam de segurança e consulta PostgreSQL.
+
+Essa divisão facilita manutenção, testes e evolução. Uma regra crítica como
+"não recomendar comprado" fica protegida no banco, não apenas na View.
+
+
+66. EVENTOS E FLUXO ASSÍNCRONO
+------------------------------
+
+O frontend utiliza eventos para diminuir o acoplamento entre partes da aplicação.
+
+Exemplo simplificado:
+
+clique em comprar
+    -> evento de compra
+    -> atualização pelo serviço
+    -> interface recebe novo estado
+    -> solicitação de treino
+    -> Worker processa
+    -> evento de recomendação pronta
+    -> View renderiza apenas o pedido mais recente
+
+Por que isso importa?
+
+- comprar é assíncrono;
+- consultar o banco é assíncrono;
+- treinar é assíncrono;
+- prever é assíncrono;
+- o usuário pode trocar de perfil antes do término.
+
+O identificador da solicitação permite reconhecer resultados antigos. A fila
+serializa trabalhos, evitando dois treinamentos modificarem o mesmo estado ao
+mesmo tempo.
+
+
+67. ERROS COMUNS E O QUE ELES ENSINAM
+-------------------------------------
+
+ERRO 1: Docker não está iniciado.
+
+Sintoma:
+
+O banco não sobe ou o socket do Docker não responde.
+
+Correção:
+
+Iniciar o Docker e executar npm run db:start novamente.
+
+ERRO 2: porta 5434 ocupada.
+
+Sintoma:
+
+Falha ao publicar a porta do PostgreSQL.
+
+Correção:
+
+Definir outra PGVECTOR_PORT e manter DATABASE_URL consistente.
+
+ERRO 3: API não conecta ao banco.
+
+Verificar:
+
+- se o container está healthy;
+- DATABASE_URL;
+- usuário, senha, banco e porta;
+- http://localhost:3100/api/health.
+
+ERRO 4: tabela ou coluna não aparece após mudança no init.sql.
+
+Causa possível:
+
+O diretório docker-entrypoint-initdb.d roda apenas na primeira criação do volume.
+Nesta aula, server.js reaplica o schema idempotente. Em projetos reais, usar
+migrations versionadas.
+
+ERRO 5: dimensão de vetor incompatível.
+
+Sintoma:
+
+O PostgreSQL rejeita um vetor ou o modelo recebe shape incorreto.
+
+Causa:
+
+Encoder, VECTOR(14) e entrada de 28 dimensões deixaram de concordar.
+
+ERRO 6: tudo recebe score parecido.
+
+Possíveis causas:
+
+- poucos dados;
+- classes desbalanceadas;
+- features pouco informativas;
+- treino insuficiente ou instável;
+- usuários com históricos muito parecidos.
+
+ERRO 7: comprado reaparece.
+
+Auditar:
+
+- purchases;
+- filtro de candidatos;
+- userId enviado;
+- última execução persistida;
+- consulta de integridade da seção 59.
+
+ERRO 8: ranking antigo aparece após trocar usuário rapidamente.
+
+Verificar requestId e a regra que só permite renderizar a solicitação mais nova.
+
+ERRO 9: memória cresce a cada recomendação.
+
+Verificar tf.tidy(), dispose() e se tensores temporários continuam referenciados.
+
+
+68. LIMITAÇÕES DESTA VERSÃO
+---------------------------
+
+Este sistema ficou muito mais consistente, mas "perfeito" não significa que ele
+adivinha a vontade do usuário. Recomendadores são aperfeiçoados continuamente.
+
+Limitações atuais:
+
+- catálogo e base de usuários ainda são pequenos;
+- compra é praticamente o único sinal comportamental;
+- ausência de compra é tratada como negativo, mas pode significar apenas que o
+  usuário nunca viu o produto;
+- features usam categorias e cores definidas manualmente;
+- não há descrição semântica dos produtos no vetor;
+- treinamento acontece no navegador;
+- não existe validação temporal separando treino e teste;
+- o mlScore não foi calibrado como probabilidade;
+- popularidade pode favorecer itens já muito expostos;
+- não há contexto de horário, dispositivo, estoque, tamanho ou localização;
+- ainda não existem experimentos A/B.
+
+Reconhecer limitações é parte do trabalho científico. Um modelo bom é medido,
+comparado e monitorado; não é considerado perfeito apenas porque funciona.
+
+
+69. NOVOS EVENTOS QUE DEVEM IR PARA O POSTGRESQL
+------------------------------------------------
+
+Uma próxima evolução pode criar uma tabela de eventos com sinais como:
+
+- impression: produto apareceu na tela;
+- click: usuário abriu o produto;
+- add_to_cart: adicionou ao carrinho;
+- remove_from_cart: removeu do carrinho;
+- favorite: marcou como favorito;
+- purchase: comprou;
+- return: devolveu;
+- dismiss: indicou que não tem interesse.
+
+Campos úteis:
+
+- user_id;
+- product_id;
+- event_type;
+- event_value;
+- occurred_at;
+- session_id;
+- recommendation_run_id;
+- position;
+- device ou contexto, quando permitido.
+
+Por que recommendation_run_id é valioso?
+
+Ele liga o comportamento ao ranking que causou a exposição. Assim podemos medir
+se uma recomendação realmente gerou clique, carrinho ou compra.
+
+
+70. MÉTRICAS PARA SABER SE MELHOROU
+-----------------------------------
+
+ACCURACY
+
+É mostrada no treinamento, mas pode enganar em classes desbalanceadas. Acertar
+muitos negativos não significa criar boas recomendações.
+
+PRECISION@K
+
+Entre os K itens recomendados, quantos foram relevantes?
+
+RECALL@K
+
+Entre os itens relevantes, quantos apareceram nos K recomendados?
+
+NDCG@K
+
+Considera relevância e posição. Acertar no topo vale mais.
+
+HIT RATE@K
+
+Mede se pelo menos um item relevante apareceu no top K.
+
+COVERAGE
+
+Mede quanto do catálogo consegue aparecer nas recomendações.
+
+DIVERSIDADE
+
+Mede quanto os itens de uma lista diferem entre si.
+
+NOVELTY
+
+Mede se o sistema apresenta itens menos óbvios, sem abandonar relevância.
+
+CTR
+
+Taxa de clique sobre impressões.
+
+CONVERSION RATE
+
+Taxa de compra depois da recomendação.
+
+RECEITA OU VALOR POR SESSÃO
+
+Métrica de negócio, que deve ser equilibrada com qualidade e experiência.
+
+O ideal é avaliar offline primeiro e depois validar online com experimento A/B.
+
+
+71. SEPARAÇÃO CORRETA ENTRE TREINO, VALIDAÇÃO E TESTE
+----------------------------------------------------
+
+Com mais dados, não devemos treinar e avaliar exatamente nos mesmos exemplos.
+
+Uma divisão temporal é especialmente importante:
+
+1. eventos antigos formam o treino;
+2. eventos seguintes formam a validação;
+3. eventos mais recentes formam o teste;
+4. nenhum evento futuro pode entrar no perfil usado para prever o passado.
+
+Isso simula a situação real: usar o que sabíamos ontem para prever amanhã.
+
+Uma divisão aleatória pode permitir vazamento temporal. Em recomendação, a ordem
+dos acontecimentos importa tanto quanto a identidade do usuário e do produto.
+
+
+72. MELHORIAS FUTURAS RECOMENDADAS
+----------------------------------
+
+1. Registrar impressões, cliques, carrinhos, compras e devoluções no PostgreSQL.
+
+2. Criar dataset temporal e métricas top-K.
+
+3. Adicionar estoque, tamanho disponível e preço atual aos filtros de elegibilidade.
+
+4. Criar embeddings semânticos de nome e descrição dos produtos.
+
+5. Combinar sinais colaborativos, conteúdo e comportamento de sessão.
+
+6. Diferenciar recompra permitida de compra única. Consumíveis podem ser
+recomendados novamente depois de um intervalo; Tênis e Calça podem seguir uma
+regra diferente.
+
+7. Adicionar feedback explícito: "não gostei" ou "não mostrar novamente".
+
+8. Criar migrations numeradas para evolução do banco.
+
+9. Treinar no backend ou em pipeline próprio quando a base crescer.
+
+10. Versionar dataset, encoder, modelo, hiperparâmetros e métricas.
+
+11. Monitorar mudança de distribuição dos dados, chamada de data drift.
+
+12. Comparar estratégias por experimento A/B.
+
+13. Calibrar scores caso a interface precise mostrar probabilidades.
+
+14. Criar cache de candidatos sem violar compras e estoque atuais.
+
+15. Proteger autenticação e autorização para um usuário acessar apenas seus dados.
+
+16. Aplicar políticas de privacidade, retenção e consentimento.
+
+
+73. CASOS DE NEGÓCIO QUE EXIGEM REGRAS DIFERENTES
+-------------------------------------------------
+
+PRODUTO DE COMPRA ÚNICA OU POUCO FREQUENTE
+
+Exemplo: uma calça específica já comprada.
+
+Regra provável:
+
+Excluir o mesmo SKU e recomendar complementares ou modelos diferentes.
+
+PRODUTO RECORRENTE
+
+Exemplo: alimento, suplemento ou item de higiene.
+
+Regra provável:
+
+Permitir recompra depois de um intervalo esperado.
+
+PRODUTO ESGOTADO OU INATIVO
+
+Regra:
+
+Excluir antes da recuperação.
+
+VARIAÇÃO DO MESMO PRODUTO
+
+Exemplo: mesmo tênis em outro tamanho.
+
+Regra depende do catálogo. Pode ser duplicata inútil ou uma alternativa válida.
+
+DEVOLUÇÃO
+
+Não deve ser tratada automaticamente como preferência positiva. Pode indicar
+problema de tamanho, qualidade ou expectativa.
+
+PRESENTE
+
+Uma compra isolada pode não representar gosto pessoal. Recência, repetição e
+contexto ajudam a não mudar todo o perfil por um único evento.
+
+USUÁRIO NOVO
+
+Usar popularidade recente, contexto disponível e diversidade, sem inventar uma
+personalização que ainda não tem evidência.
+
+
+74. GLOSSÁRIO
+-------------
+
+API
+    Interface usada pelo frontend para conversar com o backend.
+
+BACKEND
+    Parte que valida requisições, aplica regras seguras e consulta o banco.
+
+CANDIDATO
+    Produto elegível que seguirá para o ranking.
+
+COLD START
+    Situação em que não há histórico suficiente para personalizar.
+
+EMBEDDING OU VETOR
+    Lista numérica que representa características de um objeto.
+
+FEATURE
+    Informação usada como entrada do modelo.
+
+FONTE ÚNICA DE VERDADE
+    Local oficial do estado persistente. Nesta aula, PostgreSQL.
+
+HNSW
+    Estrutura de índice aproximado para busca eficiente de vizinhos.
+
+INFERÊNCIA
+    Uso do modelo treinado para produzir um score.
+
+LEAKAGE
+    Informação indevida que facilita o treino, mas não existiria na previsão real.
+
+ONE-HOT
+    Representação de categoria por posições binárias.
+
+PGVECTOR
+    Extensão que adiciona vetores e operadores de distância ao PostgreSQL.
+
+POPULARIDADE TEMPORAL
+    Popularidade em que eventos recentes pesam mais.
+
+RANKING
+    Ordenação dos candidatos.
+
+RECÊNCIA
+    Importância maior atribuída a eventos recentes.
+
+SCORE
+    Valor usado para comparação e ordenação.
+
+TARGET
+    Resposta que o modelo tenta aprender. Aqui, compra ou não compra.
+
+TARGET LEAKAGE
+    Quando o próprio alvo aparece, direta ou indiretamente, nas features.
+
+TENSOR
+    Estrutura numérica multidimensional usada pelo TensorFlow.js.
+
+TRANSAÇÃO
+    Grupo de operações que confirma tudo ou desfaz tudo.
+
+UPSERT
+    Inserir quando não existe ou atualizar quando já existe.
+
+VIZINHO VETORIAL
+    Item cujo vetor está próximo do vetor de consulta.
+
+WEB WORKER
+    Execução JavaScript paralela à thread principal da interface.
+
+
+75. MAPA MENTAL DO TREINAMENTO
+------------------------------
+
+PostgreSQL
+    |
+    |-- products
+    |-- users
+    `-- purchases
+          |
+          v
+Criar features numéricas
+    |
+    |-- preço normalizado
+    |-- idade normalizada
+    |-- categoria one-hot
+    `-- cor one-hot
+          |
+          v
+Criar pares usuário-produto
+    |
+    |-- 1 se comprou
+    `-- 0 se não comprou
+          |
+          v
+Remover alvo do perfil positivo
+          |
+          v
+Aplicar peso das classes
+          |
+          v
+TensorFlow.js
+    |
+    |-- entrada 28
+    |-- Dense 128 ReLU
+    |-- Dense 64 ReLU
+    |-- Dense 32 ReLU
+    `-- saída 1 sigmoid
+          |
+          v
+Modelo treinado para produzir mlScore
+
+
+76. MAPA MENTAL DA RECOMENDAÇÃO
+-------------------------------
+
+Usuário selecionado
+        |
+        v
+Carregar estado atual do PostgreSQL
+        |
+        v
+Criar e salvar user_vectors
+        |
+        v
+PostgreSQL + pgvector
+        |
+        |-- somente produtos ativos
+        |-- excluir compras
+        |-- calcular distância L2
+        `-- recuperar candidatos
+                |
+                v
+TensorFlow.js calcula mlScore
+                |
+                v
+Combinar ML + vetor + popularidade
+                |
+                v
+Aplicar diversidade
+                |
+                v
+Explicar e persistir ranking
+                |
+                v
+Validar compras novamente no PostgreSQL
+                |
+                v
+Renderizar somente a solicitação atual
+
+
+77. CHECKLIST PARA ALTERAR AS FEATURES
+--------------------------------------
+
+Ao adicionar uma categoria, cor ou nova feature, conferir:
+
+[ ] encoder do produto;
+[ ] encoder do usuário;
+[ ] ordem exata das dimensões;
+[ ] quantidade total do vetor;
+[ ] coluna VECTOR(n) no PostgreSQL;
+[ ] tamanho da entrada da rede, normalmente 2 x n;
+[ ] seeds e dados antigos;
+[ ] sincronização de product_vectors;
+[ ] user_vectors já persistidos;
+[ ] índice vetorial;
+[ ] versão do modelo;
+[ ] testes de shape e de ranking.
+
+Por exemplo, se o vetor passar de 14 para 16 dimensões, a entrada concatenada da
+rede passa de 28 para 32. Alterar apenas um desses pontos causará inconsistência.
+
+
+78. CHECKLIST DE INTEGRIDADE DO RECOMENDADOR
+-------------------------------------------
+
+[ ] PostgreSQL é a única fonte usada em runtime.
+[ ] JSONs não são fallback silencioso.
+[ ] Produtos inativos são excluídos.
+[ ] Compras são excluídas antes do LIMIT.
+[ ] Compras são conferidas novamente antes da persistência.
+[ ] Nova compra solicita retreino.
+[ ] Remoção de compra solicita retreino.
+[ ] Resultado antigo não sobrescreve usuário novo.
+[ ] Vetores têm exatamente 14 dimensões.
+[ ] Modelo recebe exatamente 28 valores por exemplo.
+[ ] Exemplo positivo não contém o produto-alvo no perfil.
+[ ] Peso de classe não é extremo.
+[ ] Tensores temporários são descartados.
+[ ] Erros liberam a interface.
+[ ] Ranking grava versão, estratégia e componentes do score.
+[ ] Consulta da seção 59 retorna zero linhas.
+[ ] Métricas futuras serão calculadas com dados não usados no treino.
+
+
+79. O QUE FOI APRENDIDO NA AULA 2
+---------------------------------
+
+[x] Formular recomendação como aprendizado supervisionado.
+[x] Criar exemplos positivos e negativos.
+[x] Transformar dados em vetores numéricos.
+[x] Normalizar valores contínuos.
+[x] Codificar categorias com one-hot.
+[x] Aplicar pesos às famílias de features.
+[x] Criar um vetor de 14 dimensões.
+[x] Concatenar usuário e produto em 28 entradas.
+[x] Treinar rede neural com TensorFlow.js.
+[x] Executar treinamento em Web Worker.
+[x] Entender target leakage e corrigi-lo.
+[x] Tratar classes desbalanceadas.
+[x] Usar recência no perfil do usuário.
+[x] Usar popularidade temporal no cold start.
+[x] Separar recuperação de ranking.
+[x] Executar PostgreSQL com Docker.
+[x] Instalar e usar pgvector.
+[x] Modelar relação N:N com purchases.
+[x] Persistir vetores de produtos e usuários.
+[x] Buscar vizinhos com distância L2.
+[x] Criar índice HNSW.
+[x] Usar transação e UPSERT.
+[x] Excluir produtos já comprados em três barreiras.
+[x] Combinar modelo, vetor e popularidade.
+[x] Aplicar diversidade sem destruir o score-base.
+[x] Produzir explicações para o ranking.
+[x] Persistir execuções para auditoria.
+[x] Retreinar após mudanças no histórico.
+[x] Controlar concorrência e resultados obsoletos.
+[x] Evitar vazamento de memória com tensores.
+[x] Entender limitações e próximos passos profissionais.
+
+
+80. RESUMO FINAL DA AULA
+------------------------
+
+Começamos com um recomendador educacional que carregava JSONs, guardava compras
+na sessão do navegador, criava features e treinava uma rede neural com
+TensorFlow.js.
+
+Depois elevamos a arquitetura:
+
+- PostgreSQL virou a fonte única de verdade;
+- Docker tornou o ambiente reproduzível;
+- pgvector passou a persistir e comparar vetores;
+- compras viraram relacionamento real no banco;
+- produtos comprados são eliminados antes da busca e antes da persistência;
+- o perfil do usuário passou a respeitar recência;
+- o cold start passou a usar popularidade temporal;
+- o ranking passou a combinar ML, vetor e popularidade;
+- diversidade reduziu listas repetitivas;
+- cada ranking passou a ser versionado, explicado e auditável;
+- target leakage, desbalanceamento, concorrência e memória foram tratados.
+
+A principal mudança de pensamento foi esta:
+
+O banco vetorial não substitui o modelo de machine learning. Ele organiza e
+recupera candidatos. O modelo aprende padrões. As regras de negócio garantem
+elegibilidade. A diversidade melhora a lista. A persistência permite auditoria.
+O sistema de recomendação nasce da cooperação de todas essas partes.
+
+
+FRASE CENTRAL PARA LEMBRAR
+--------------------------
+
+"Recomendar bem não é apenas prever o que o usuário pode gostar: é recuperar
+candidatos válidos, excluir o que não pode aparecer, ordenar com sinais úteis,
+diversificar, explicar, medir e aprender continuamente com dados reais."
+
+
+FIM DA REFERÊNCIA DA AULA 2
+===========================

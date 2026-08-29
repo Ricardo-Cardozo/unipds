@@ -50,6 +50,9 @@ export class ModelController {
                 this.handleTrainingProgressUpdate(progress);
             }
         );
+        this.#events.onModelError(({ message }) => {
+            this.#modelView.showTrainingError(message);
+        });
 
     }
 

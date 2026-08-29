@@ -39,6 +39,19 @@ export default class Events {
         document.dispatchEvent(event);
     }
 
+    static onModelError(callback) {
+        document.addEventListener(events.modelError, (event) => {
+            return callback(event.detail);
+        });
+    }
+
+    static dispatchModelError(data) {
+        const event = new CustomEvent(events.modelError, {
+            detail: data
+        });
+        document.dispatchEvent(event);
+    }
+
     static onTrainModel(callback) {
         document.addEventListener(events.modelTrain, (event) => {
             return callback(event.detail);

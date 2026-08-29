@@ -59,9 +59,12 @@ const userController = UserController.init({
 });
 
 
-userController.renderUsers({
-    "id": 99,
-    "name": "Josézin da Silva",
-    "age": 30,
-    "purchases": []
-});
+// Na versão anterior, Josézin era criado aqui e salvo no sessionStorage:
+// userController.renderUsers({
+//     "id": 99,
+//     "name": "Josézin da Silva",
+//     "age": 30,
+//     "purchases": []
+// });
+// Agora ele é um seed da tabela `users`, como todos os demais usuários.
+userController.renderUsers();

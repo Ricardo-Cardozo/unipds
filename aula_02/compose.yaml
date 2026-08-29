@@ -1,0 +1,30 @@
+services:
+  database:
+    # Esta imagem oficial já combina PostgreSQL com a extensão pgvector.
+    # Assim não precisamos compilar a extensão manualmente durante a aula.
+    image: pgvector/pgvector:pg17
+    container_name: aula-02-pgvector
+    environment:
+      # Estas credenciais são apenas para o ambiente local de aprendizado.
+      # Em produção, use secrets e nunca versione senhas reais.
+      POSTGRES_DB: recommendations
+      POSTGRES_USER: recommendations
+      POSTGRES_PASSWORD: recommendations
+    ports:
+      # Usamos 5434 no host para não disputar a porta padrão com outro projeto.
+      # Dentro do container, o PostgreSQL continua ouvindo normalmente em 5432.
+      - "${PGVECTOR_PORT:-5434}:5432"
+    volumes:
+      # O volume mantém os vetores mesmo quando o container é reiniciado.
+      - pgvector_data:/var/lib/postgresql/data
+      # Scripts desta pasta rodam automaticamente na primeira criação do banco.
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recommendations -d recommendations"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgvector_data:
