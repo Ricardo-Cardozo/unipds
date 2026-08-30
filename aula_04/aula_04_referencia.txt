@@ -1,0 +1,3169 @@
+AULA 04 — IA GENERATIVA LOCAL NO NAVEGADOR COM GEMINI NANO,
+PROMPT API E JAVASCRIPT
+======================================================================
+
+OBJETIVO DESTA REFERÊNCIA
+-------------------------
+
+Este arquivo registra o conteúdo estudado e praticado na Aula 4.
+
+Ele foi escrito para servir como uma base de consulta futura e segue o mesmo
+estilo dos arquivos de referência das Aulas 1, 2 e 3.
+
+Nesta aula, criamos uma interface web capaz de conversar com um modelo de
+linguagem executado localmente pelo Google Chrome. O projeto usa a Prompt API,
+o modelo Gemini Nano, JavaScript assíncrono, resposta em streaming e controles
+para interromper a geração.
+
+Também corrigimos problemas reais encontrados ao executar o projeto:
+
+1. bloqueio de módulos JavaScript abertos pelo protocolo file;
+2. erro de CORS com origem null;
+3. necessidade de servir o projeto por HTTP;
+4. download do modelo iniciado sem gesto do usuário;
+5. diferenças entre versões experimentais e atuais da Prompt API;
+6. parâmetros temperature e topK indisponíveis em algumas versões;
+7. aviso sobre idiomas de entrada e saída;
+8. acompanhamento do download do modelo;
+9. cancelamento de respostas com AbortController;
+10. tratamento dos estados available, downloadable, downloading e unavailable.
+
+Assuntos principais:
+
+1. IA generativa.
+2. Modelos de linguagem.
+3. Gemini Nano.
+4. IA integrada ao navegador.
+5. Execução local e privacidade.
+6. Prompt API do Chrome.
+7. Sessões de conversa.
+8. System prompt e user prompt.
+9. Streaming de texto.
+10. Async iterators e for await.
+11. Async generators e yield.
+12. AbortController.
+13. Temperature e topK.
+14. Verificação de compatibilidade.
+15. Download condicionado a gesto do usuário.
+16. HTML modules, HTTP e CORS.
+17. Servidor local com http-server.
+18. Interface e estados de carregamento.
+19. Tratamento de erros.
+20. Compatibilidade entre versões da API.
+
+Fluxo geral:
+
+usuário abre a página por HTTP
+        |
+        v
+JavaScript verifica o Chrome e a Prompt API
+        |
+        v
+LanguageModel.availability()
+        |
+        +--> unavailable: mostra erro e bloqueia o uso
+        |
+        +--> downloadable: aguarda o clique do usuário
+        |
+        +--> downloading: informa o estado de download
+        |
+        +--> available: libera o uso imediato
+        |
+        v
+usuário escreve uma pergunta e clica em Enviar
+        |
+        v
+LanguageModel.create()
+        |
+        v
+criação da sessão com instrução de sistema
+        |
+        v
+session.promptStreaming()
+        |
+        v
+resposta chega em partes
+        |
+        v
+for await atualiza a interface
+        |
+        v
+usuário pode clicar em Parar
+        |
+        v
+AbortController cancela a geração
+
+
+1. QUAL É O PROBLEMA DA AULA 4?
+-------------------------------
+
+Nas aulas anteriores, usamos inteligência artificial para:
+
+- classificar e recomendar produtos;
+- detectar objetos em imagens;
+- transformar previsões em ações dentro de um jogo.
+
+Na Aula 4, o problema muda.
+
+Agora queremos permitir que uma pessoa faça uma pergunta em linguagem natural e
+receba uma resposta gerada por um modelo de linguagem.
+
+O desafio não é somente chamar o modelo.
+
+O sistema completo precisa:
+
+1. descobrir se o navegador oferece a API;
+2. descobrir se a máquina suporta o modelo;
+3. descobrir se o modelo já está instalado;
+4. solicitar o download no momento permitido;
+5. criar uma sessão;
+6. enviar o prompt;
+7. receber o texto aos poucos;
+8. mostrar o progresso na interface;
+9. permitir o cancelamento;
+10. tratar incompatibilidades e erros.
+
+
+2. O QUE É IA GENERATIVA?
+-------------------------
+
+IA generativa é uma categoria de sistemas capazes de produzir conteúdo novo.
+
+Dependendo do modelo, esse conteúdo pode ser:
+
+- texto;
+- imagem;
+- áudio;
+- vídeo;
+- código;
+- dados estruturados.
+
+Nesta aula, trabalhamos com geração de texto.
+
+A aplicação recebe uma pergunta e produz uma resposta textual.
+
+Exemplo conceitual:
+
+entrada:
+    "Explique o que é uma rede neural."
+
+saída:
+    texto gerado pelo modelo para responder à pergunta.
+
+
+3. O QUE É UM MODELO DE LINGUAGEM?
+----------------------------------
+
+Um modelo de linguagem aprende padrões existentes em grandes quantidades de
+texto.
+
+Durante a geração, ele estima quais tokens são mais adequados para continuar o
+contexto recebido.
+
+Um token pode representar:
+
+- uma palavra;
+- parte de uma palavra;
+- pontuação;
+- símbolos;
+- espaços ou combinações de caracteres.
+
+De forma simplificada:
+
+prompt
+    |
+    v
+modelo calcula probabilidades
+    |
+    v
+seleciona o próximo token
+    |
+    v
+adiciona o token ao contexto
+    |
+    v
+repete até concluir
+
+O modelo não consulta uma resposta pronta em um banco de frases. Ele gera a
+sequência com base no contexto e nos padrões aprendidos.
+
+
+4. O QUE É GEMINI NANO?
+-----------------------
+
+Gemini Nano é uma versão compacta da família Gemini, preparada para executar em
+dispositivos locais compatíveis.
+
+No contexto desta aula, ele é administrado pelo Chrome.
+
+Isso significa que a aplicação não baixa manualmente um arquivo de pesos e não
+implementa o motor de inferência.
+
+O navegador cuida de:
+
+- verificar compatibilidade;
+- obter os componentes necessários;
+- baixar o modelo;
+- armazenar o modelo;
+- criar a sessão;
+- executar a inferência;
+- expor o resultado por uma API JavaScript.
+
+O código da aplicação conversa com a interface LanguageModel.
+
+
+5. MODELO LOCAL E MODELO NA NUVEM
+---------------------------------
+
+MODELO NA NUVEM
+
+Fluxo comum:
+
+navegador
+    |
+    v
+requisição pela internet
+    |
+    v
+servidor do provedor
+    |
+    v
+modelo remoto
+    |
+    v
+resposta pela internet
+
+Vantagens:
+
+- modelos maiores;
+- atualizações centralizadas;
+- menor exigência de hardware do cliente;
+- comportamento mais uniforme entre dispositivos.
+
+Desvantagens:
+
+- depende da internet;
+- possui latência de rede;
+- normalmente exige credencial e custo de API;
+- o conteúdo precisa sair do dispositivo.
+
+MODELO LOCAL
+
+Fluxo desta aula:
+
+página
+    |
+    v
+API integrada ao Chrome
+    |
+    v
+modelo no próprio dispositivo
+    |
+    v
+resposta local
+
+Vantagens:
+
+- baixa latência depois do download;
+- possibilidade de uso sem conexão após a instalação;
+- não exige enviar cada prompt para um servidor;
+- não expõe uma chave de API no frontend;
+- melhora a privacidade para determinados casos.
+
+Desvantagens:
+
+- depende do navegador;
+- depende do hardware;
+- exige espaço em disco;
+- o primeiro download pode ser grande;
+- modelos locais menores têm limitações;
+- APIs experimentais podem mudar.
+
+
+6. O QUE SIGNIFICA BUILT-IN AI?
+-------------------------------
+
+Built-in AI significa inteligência artificial integrada à plataforma.
+
+Neste projeto, o navegador fornece uma API de alto nível.
+
+Em vez de o projeto implementar:
+
+- carregamento de pesos;
+- alocação de GPU;
+- tokenização;
+- inferência;
+- cache do modelo;
+- atualização dos arquivos;
+
+o JavaScript usa:
+
+    LanguageModel.availability(...)
+
+    LanguageModel.create(...)
+
+    session.promptStreaming(...)
+
+Essa abstração reduz a complexidade da aplicação, mas cria dependência da API e
+das regras definidas pelo navegador.
+
+
+7. A PROMPT API
+---------------
+
+A Prompt API permite criar uma sessão com um modelo de linguagem e enviar
+prompts pelo JavaScript.
+
+As operações centrais usadas na aula são:
+
+LanguageModel.availability(opcoes)
+    verifica o estado de disponibilidade;
+
+LanguageModel.create(opcoes)
+    prepara e cria uma sessão;
+
+session.promptStreaming(mensagem, opcoes)
+    gera uma resposta em streaming;
+
+session.destroy()
+    encerra uma sessão que não será mais utilizada.
+
+A API ainda evolui. Por isso, o código precisa fazer detecção de recursos e não
+presumir que toda versão do Chrome possui exatamente os mesmos métodos.
+
+
+8. ESTRUTURA DO PROJETO
+-----------------------
+
+A pasta aula_04 contém:
+
+aula_04/
+    index.html
+    index.js
+    style.css
+    package.json
+    package-lock.json
+    aula_04_referencia.txt
+
+Responsabilidades:
+
+index.html
+    estrutura visual e campos do formulário;
+
+style.css
+    aparência, layout, cores e estados dos componentes;
+
+index.js
+    compatibilidade, eventos, sessão, geração e cancelamento;
+
+package.json
+    dependência e comando do servidor local;
+
+package-lock.json
+    versões resolvidas das dependências;
+
+aula_04_referencia.txt
+    documentação completa da aula.
+
+
+9. O PAPEL DO HTML
+------------------
+
+O HTML cria:
+
+- o título da aplicação;
+- o formulário;
+- o controle de temperature;
+- o campo de topK;
+- a área da pergunta;
+- o botão Enviar;
+- a área da resposta;
+- o rodapé.
+
+O documento declara:
+
+    lang="pt-BR"
+
+Isso ajuda:
+
+- mecanismos de busca;
+- leitores de tela;
+- corretores;
+- ferramentas de acessibilidade;
+- interpretação do idioma do documento.
+
+O JavaScript é carregado como módulo:
+
+    <script type="module" src="./index.js"></script>
+
+Esse detalhe foi importante no primeiro erro encontrado.
+
+
+10. POR QUE TYPE="MODULE" IMPORTA?
+---------------------------------
+
+Scripts do tipo module seguem regras mais rígidas de origem e segurança.
+
+Eles também permitem:
+
+- import e export;
+- escopo próprio;
+- carregamento assíncrono por padrão;
+- organização moderna de código.
+
+Entretanto, abrir o HTML diretamente como arquivo local gera uma origem especial.
+
+O endereço começa com:
+
+    file://
+
+Nesse cenário, o navegador tratou a origem como:
+
+    null
+
+Por segurança, o Chrome bloqueou o carregamento de index.js.
+
+
+11. PRIMEIRO ERRO: FILE, CORS E ORIGIN NULL
+-------------------------------------------
+
+O erro exibido foi equivalente a:
+
+    Access to script at 'file:///.../index.js'
+    from origin 'null' has been blocked by CORS policy
+
+E também:
+
+    GET file:///.../index.js net::ERR_FAILED
+
+CAUSA
+
+O index.html foi aberto diretamente pelo gerenciador de arquivos.
+
+Assim:
+
+    index.html -> file://
+    index.js   -> file://
+    origem     -> null
+
+Como index.js é um módulo, o Chrome exige uma origem válida.
+
+CORS significa Cross-Origin Resource Sharing.
+
+É o mecanismo que determina quando um recurso de uma origem pode ser lido por
+outra origem.
+
+Mesmo que os dois arquivos estejam na mesma pasta, file não equivale a um
+servidor web normal.
+
+
+12. CORREÇÃO: USAR UM SERVIDOR HTTP LOCAL
+-----------------------------------------
+
+A solução é servir a pasta por HTTP.
+
+Comandos:
+
+    cd "/home/ricardo/Área de trabalho/unipds/machine_learning/aula_04"
+    npm install
+    npm start
+
+O script start executa:
+
+    npx http-server .
+
+Então o acesso passa a acontecer por um endereço parecido com:
+
+    http://127.0.0.1:8080
+
+ou, se a porta 8080 já estiver ocupada:
+
+    http://127.0.0.1:8081
+
+Agora a página possui uma origem HTTP válida e o módulo pode ser carregado.
+
+REGRA PARA LEMBRAR
+
+Projetos com modules, fetch, workers e várias APIs modernas devem ser abertos por
+um servidor HTTP, mesmo durante o desenvolvimento local.
+
+
+13. PACKAGE.JSON E HTTP-SERVER
+------------------------------
+
+O package.json define:
+
+nome:
+    webai-intro;
+
+versão:
+    0.0.1;
+
+dependência de desenvolvimento:
+    http-server;
+
+script:
+    npm start.
+
+Trecho conceitual:
+
+    "scripts": {
+        "start": "npx http-server ."
+    }
+
+O ponto final significa:
+
+    sirva a pasta atual.
+
+O http-server não é o modelo de IA.
+
+Ele apenas entrega HTML, CSS e JavaScript por HTTP.
+
+O modelo é administrado pelo Chrome.
+
+
+14. O PAPEL DO CSS
+------------------
+
+O CSS cria uma interface escura com destaque verde.
+
+Principais decisões:
+
+- reset de margin e padding;
+- box-sizing border-box;
+- layout centralizado com Flexbox;
+- container com largura máxima;
+- parâmetros organizados por CSS Grid;
+- campos com estados de foco;
+- botão verde para enviar;
+- botão vermelho para parar;
+- área de saída com white-space pre-wrap;
+- layout adaptável com auto-fit e minmax.
+
+O seletor:
+
+    #output:empty
+
+oculta a área de resposta quando ela está vazia.
+
+O estilo:
+
+    white-space: pre-wrap
+
+preserva quebras de linha geradas pelo modelo.
+
+
+15. ELEMENTOS DA INTERFACE NO JAVASCRIPT
+----------------------------------------
+
+O objeto elements guarda referências aos elementos do DOM.
+
+Ele contém:
+
+- temperature;
+- temperatureValue;
+- topK;
+- topKValue;
+- form;
+- questionInput;
+- output;
+- button;
+- year.
+
+Benefício:
+
+Em vez de chamar document.getElementById várias vezes, o programa localiza cada
+elemento uma vez e reutiliza sua referência.
+
+Esse objeto funciona como uma pequena camada de acesso à interface.
+
+
+16. ESTADO CENTRAL EM AICONTEXT
+-------------------------------
+
+O objeto aiContext mantém o estado da integração com a IA:
+
+session:
+    sessão atual do modelo;
+
+abortController:
+    controlador usado para cancelar a geração;
+
+isGenerating:
+    informa se existe uma resposta sendo produzida;
+
+availability:
+    estado atual do modelo;
+
+supportsSamplingParameters:
+    informa se a versão da API aceita temperature e topK.
+
+Separar esse estado evita variáveis soltas e facilita entender o ciclo da
+aplicação.
+
+
+17. INICIALIZAÇÃO COM UMA IIFE ASSÍNCRONA
+-----------------------------------------
+
+O final de index.js usa uma função assíncrona executada imediatamente.
+
+Fluxo da inicialização:
+
+1. atualiza o ano do rodapé;
+2. chama checkRequirements();
+3. mostra erros fatais, se existirem;
+4. consulta parâmetros suportados;
+5. configura valores mínimos, máximos e padrões;
+6. desativa controles legados quando necessário;
+7. registra os event listeners.
+
+Uma IIFE permite usar await durante a inicialização sem criar uma variável global
+adicional.
+
+
+18. VERIFICAÇÃO DO NAVEGADOR
+----------------------------
+
+O código verifica:
+
+    window.chrome
+
+Isso funciona como uma indicação inicial de que o navegador é baseado em Chrome.
+
+Depois, a verificação realmente importante é:
+
+    'LanguageModel' in self
+
+Se LanguageModel não existir:
+
+- a API não está exposta;
+- o navegador pode ser incompatível;
+- a versão pode ser antiga;
+- a flag necessária pode estar desativada;
+- o recurso pode não estar liberado naquele canal ou perfil.
+
+Nesse caso, a interface mostra orientações e desativa o botão.
+
+
+19. FLAGS E PÁGINAS INTERNAS DO CHROME
+--------------------------------------
+
+Durante desenvolvimento ou em versões experimentais, estas páginas podem ajudar:
+
+Prompt API:
+
+    chrome://flags/#prompt-api-for-gemini-nano
+
+Modelo no dispositivo:
+
+    chrome://flags/#optimization-guide-on-device-model
+
+Diagnóstico do modelo:
+
+    chrome://on-device-internals
+
+Depois de alterar uma flag, é necessário reiniciar o Chrome.
+
+IMPORTANTE
+
+Flags são experimentais.
+
+Os nomes, a necessidade e o comportamento podem mudar entre versões.
+
+Em uma versão futura, a API pode estar disponível sem a flag ou pode adotar outra
+forma de ativação.
+
+
+20. REQUISITOS DE HARDWARE E SOFTWARE
+-------------------------------------
+
+A execução local depende de requisitos definidos pelo Chrome.
+
+Entre os fatores relevantes estão:
+
+- sistema operacional compatível;
+- versão recente do Chrome;
+- espaço livre em disco;
+- memória RAM;
+- quantidade de núcleos de CPU;
+- GPU compatível e memória de vídeo;
+- rede disponível para o primeiro download.
+
+Na máquina usada durante a aula, verificamos:
+
+- Ubuntu Linux;
+- Chrome 151;
+- 16 GB de RAM;
+- 28 processadores lógicos;
+- aproximadamente 75 GB livres;
+- GPU Radeon RX 580.
+
+Essa máquina atende com folga aos critérios gerais observados para CPU e espaço.
+
+O suporte final, porém, deve ser confirmado pela própria API:
+
+    LanguageModel.availability(...)
+
+Não basta avaliar somente a ficha técnica.
+
+
+21. LANGUAGEOPTIONS
+-------------------
+
+O código declara:
+
+    expectedInputLanguages: ['pt']
+    expectedOutputLanguages: ['pt']
+
+Essas opções informam a intenção da aplicação:
+
+- pergunta esperada em português;
+- resposta esperada em português.
+
+Informar os idiomas ajuda o navegador a:
+
+- verificar suporte;
+- escolher componentes de idioma;
+- preparar adaptadores necessários;
+- alertar quando a combinação não é suportada.
+
+O idioma do documento HTML e os idiomas do modelo são conceitos diferentes.
+
+    lang="pt-BR"
+
+descreve a página.
+
+    expectedInputLanguages
+    expectedOutputLanguages
+
+descrevem o uso esperado do modelo.
+
+
+22. LIMITAÇÃO DE IDIOMA ENCONTRADA
+----------------------------------
+
+O console do Chrome exibiu um aviso pedindo a definição do idioma de saída.
+
+Na versão testada, o próprio aviso informou suporte oficial de saída para:
+
+- de;
+- en;
+- es;
+- fr;
+- ja.
+
+Português não estava nessa lista oficial.
+
+Isso significa que pedir:
+
+    expectedOutputLanguages: ['pt']
+
+pode resultar em indisponibilidade ou erro, mesmo que o modelo algumas vezes
+entenda ou produza português.
+
+Boas estratégias:
+
+1. usar um idioma oficialmente suportado;
+2. manter português somente quando a versão instalada confirmar suporte;
+3. oferecer fallback para uma API em nuvem;
+4. mostrar uma mensagem clara ao usuário;
+5. não confundir capacidade ocasional com suporte garantido.
+
+O system prompt pede resposta em português, mas o prompt não substitui o suporte
+formal de idioma da API.
+
+
+23. AVAILABILITY: O ESTADO DO MODELO
+------------------------------------
+
+A chamada:
+
+    LanguageModel.availability(languageOptions)
+
+consulta se a combinação solicitada pode ser usada.
+
+Estados principais:
+
+available
+    modelo pronto para uso;
+
+downloadable
+    modelo ou componente pode ser baixado;
+
+downloading
+    download está em andamento;
+
+unavailable
+    recurso não pode ser usado naquele ambiente ou com aquelas opções.
+
+Esse método não gera texto.
+
+Ele ajuda a aplicação a decidir qual experiência mostrar antes de criar a
+sessão.
+
+
+24. COMO O CÓDIGO TRATA CADA ESTADO
+-----------------------------------
+
+AVAILABLE
+
+- nenhuma mensagem de erro;
+- pergunta pode ser processada imediatamente.
+
+DOWNLOADABLE
+
+- informa que o modelo precisa ser baixado;
+- altera o texto do botão;
+- espera a pessoa clicar em Enviar.
+
+DOWNLOADING
+
+- informa que o download está em andamento;
+- orienta a enviar uma pergunta para acompanhar.
+
+UNAVAILABLE
+
+- registra que o dispositivo ou a configuração não oferece suporte;
+- o fluxo principal desativa o botão.
+
+Essa separação melhora a experiência porque "ainda não foi baixado" não é o
+mesmo que "não é suportado".
+
+
+25. SEGUNDO ERRO: DOWNLOAD SEM GESTO DO USUÁRIO
+-----------------------------------------------
+
+Depois de corrigir o acesso por HTTP, surgiu outro erro:
+
+    NotAllowedError:
+    Requires a user gesture when availability is
+    "downloading" or "downloadable".
+
+CAUSA
+
+A versão inicial chamava LanguageModel.create() automaticamente durante o
+carregamento da página.
+
+Quando o modelo ainda precisa ser baixado, o Chrome exige uma ativação do
+usuário.
+
+Exemplos de ativação:
+
+- clique;
+- toque;
+- tecla;
+- envio explícito do formulário.
+
+Essa regra evita que qualquer página inicie silenciosamente um download grande.
+
+
+26. CORREÇÃO: CRIAR O MODELO DEPOIS DO CLIQUE
+---------------------------------------------
+
+O fluxo foi reorganizado.
+
+checkRequirements() agora:
+
+- consulta o estado;
+- informa o que está acontecendo;
+- não inicia o download automaticamente.
+
+LanguageModel.create() fica dentro de askAI().
+
+askAI() é chamada a partir do submit do formulário.
+
+Portanto:
+
+carregamento da página
+    |
+    v
+apenas verifica disponibilidade
+    |
+    v
+usuário clica em Enviar
+    |
+    v
+evento submit
+    |
+    v
+askAI()
+    |
+    v
+LanguageModel.create()
+    |
+    v
+download autorizado
+
+Esse fluxo respeita a regra do navegador e torna a intenção do usuário explícita.
+
+
+27. MONITORANDO O DOWNLOAD
+--------------------------
+
+LanguageModel.create() recebe uma função monitor.
+
+Ela registra um listener para:
+
+    downloadprogress
+
+O evento fornece dados de progresso.
+
+O código calcula uma porcentagem e mostra:
+
+    Baixando o Gemini Nano: 37%
+
+Benefícios:
+
+- evita a impressão de que a página travou;
+- explica por que a primeira resposta demora;
+- permite acompanhar um download grande;
+- melhora a confiança da pessoa na interface.
+
+O primeiro uso tende a ser o mais demorado.
+
+Depois que o modelo e seus componentes estão instalados, novas sessões podem ser
+criadas sem repetir o download completo.
+
+
+28. CRIAÇÃO DA SESSÃO
+---------------------
+
+A sessão é criada com:
+
+    LanguageModel.create(sessionOptions)
+
+sessionOptions reúne:
+
+- idiomas esperados;
+- prompts iniciais;
+- monitor de download;
+- parâmetros de amostragem, quando suportados.
+
+A sessão representa um contexto de interação com o modelo.
+
+Depois de criada, ela é armazenada em:
+
+    aiContext.session
+
+Também atualizamos:
+
+    aiContext.availability = 'available'
+
+porque a criação foi concluída.
+
+
+29. INITIALPROMPTS
+------------------
+
+O código cria a sessão com um prompt inicial de papel system.
+
+Objetivo da instrução:
+
+- definir o comportamento do assistente;
+- pedir clareza;
+- pedir objetividade;
+- pedir texto simples em vez de Markdown.
+
+Exemplo conceitual:
+
+    role: system
+    content: "Você é um assistente..."
+
+O system prompt não é a pergunta da pessoa.
+
+Ele configura as regras gerais da sessão.
+
+
+30. PAPÉIS SYSTEM E USER
+------------------------
+
+SYSTEM
+
+Define identidade, regras e estilo esperado.
+
+Exemplos:
+
+- responda com objetividade;
+- explique para iniciantes;
+- não use Markdown;
+- responda em determinado idioma.
+
+USER
+
+Contém a solicitação feita pela pessoa.
+
+No projeto:
+
+    role: 'user'
+    content: question
+
+Separar papéis deixa a intenção de cada mensagem explícita para o modelo.
+
+O system prompt deve orientar, mas não garante sozinho:
+
+- que toda informação será verdadeira;
+- que o idioma seja formalmente suportado;
+- que nunca ocorra alucinação;
+- que uma política da plataforma seja contornada.
+
+
+31. PROMPT NÃO É APENAS UMA PERGUNTA
+------------------------------------
+
+Prompt é o contexto fornecido ao modelo para orientar a geração.
+
+Um bom prompt pode conter:
+
+- objetivo;
+- contexto;
+- formato desejado;
+- restrições;
+- público-alvo;
+- exemplos;
+- critérios de qualidade.
+
+Exemplo fraco:
+
+    "Fale sobre JavaScript."
+
+Exemplo mais definido:
+
+    "Explique promises em JavaScript para uma pessoa iniciante.
+     Use um exemplo curto e compare com async/await."
+
+Quanto mais clara a intenção, maior a chance de a resposta ser útil.
+
+
+32. TEMPERATURE
+---------------
+
+Temperature controla a aleatoriedade da seleção dos próximos tokens.
+
+Simplificação:
+
+temperature baixa:
+
+- respostas mais previsíveis;
+- maior foco nos tokens de alta probabilidade;
+- útil para explicações objetivas e tarefas determinísticas.
+
+temperature alta:
+
+- maior variedade;
+- respostas potencialmente mais criativas;
+- maior possibilidade de fugir do caminho mais provável.
+
+Temperature não significa inteligência.
+
+Também não garante:
+
+- veracidade;
+- qualidade;
+- criatividade útil;
+- ausência de repetição.
+
+Ela altera a distribuição usada na amostragem.
+
+
+33. TOPK
+--------
+
+topK limita quantos candidatos mais prováveis participam da escolha do próximo
+token.
+
+Exemplo conceitual:
+
+O modelo calcula centenas de candidatos.
+
+Com topK igual a 3:
+
+- conserva os três mais prováveis;
+- descarta os demais;
+- seleciona dentro desse pequeno conjunto.
+
+topK menor:
+
+- tende a produzir comportamento mais previsível;
+
+topK maior:
+
+- permite mais variedade.
+
+Temperature e topK podem atuar juntos, mas não são equivalentes.
+
+
+34. MUDANÇA DA API: PARÂMETROS LEGADOS
+--------------------------------------
+
+O material original da aula usa:
+
+    LanguageModel.params()
+
+e envia:
+
+    temperature
+    topK
+
+No Chrome testado durante nossa adaptação, esses recursos não estavam
+necessariamente disponíveis na API web padrão atual.
+
+Por isso, o código agora testa:
+
+    typeof LanguageModel.params === 'function'
+
+Se o método existir:
+
+- consulta limites e valores padrão;
+- ativa supportsSamplingParameters;
+- envia temperature e topK para a sessão.
+
+Se não existir:
+
+- usa valores de fallback somente para preencher a interface;
+- desativa os controles;
+- mantém a explicação pedagógica;
+- não envia opções incompatíveis para LanguageModel.create().
+
+Essa técnica é chamada feature detection.
+
+
+35. FEATURE DETECTION
+---------------------
+
+Feature detection significa testar se um recurso existe antes de usá-lo.
+
+Exemplo:
+
+    if (typeof LanguageModel.params === 'function') {
+        ...
+    }
+
+É melhor do que presumir comportamento apenas pelo número da versão.
+
+Motivos:
+
+- recursos podem ser ativados gradualmente;
+- flags podem mudar a disponibilidade;
+- perfis diferentes podem ter configurações diferentes;
+- APIs experimentais mudam rapidamente;
+- extensões e páginas web podem receber superfícies diferentes.
+
+REGRA
+
+Em APIs experimentais, consulte o recurso real em tempo de execução.
+
+
+36. FALLBACKPARAMS
+------------------
+
+O objeto fallbackParams contém:
+
+- defaultTemperature: 1;
+- defaultTopK: 3;
+- maxTemperature: 2;
+- maxTopK: 128.
+
+Ele permite inicializar os campos mesmo sem LanguageModel.params().
+
+Entretanto, esses valores não provam que a versão atual aceitará os parâmetros.
+
+Por isso, o código:
+
+1. mostra os valores;
+2. desativa os campos quando a API não suporta;
+3. adiciona um title explicativo;
+4. registra um aviso no console;
+5. não envia os parâmetros à sessão.
+
+O fallback preserva a aula sem fingir suporte inexistente.
+
+
+37. EVENTOS DOS CONTROLES
+-------------------------
+
+O evento input do controle temperature atualiza imediatamente o número mostrado
+na tela.
+
+O evento input de topK faz o mesmo.
+
+Fluxo:
+
+usuário move ou altera o campo
+    |
+    v
+evento input
+    |
+    v
+textContent recebe o novo valor
+
+Isso fornece feedback visual instantâneo.
+
+Os listeners são registrados apenas depois da verificação inicial.
+
+
+38. ENVIO DO FORMULÁRIO
+-----------------------
+
+O formulário escuta:
+
+    submit
+
+O código executa:
+
+    event.preventDefault()
+
+Sem isso, o navegador faria o comportamento padrão do formulário, normalmente
+recarregando ou navegando a página.
+
+Depois:
+
+- se já está gerando, o clique funciona como Parar;
+- se não está gerando, onSubmitQuestion() inicia a pergunta.
+
+Usar submit também permite que a interface funcione com teclado, não apenas com
+um listener de click no botão.
+
+
+39. VALIDAÇÃO DA PERGUNTA
+-------------------------
+
+O código lê:
+
+    questionInput.value
+
+Depois verifica:
+
+    question.trim()
+
+Se o resultado estiver vazio, a função retorna.
+
+trim() remove espaços em branco do começo e do fim.
+
+Assim, entradas contendo apenas:
+
+- espaços;
+- tabulações;
+- quebras de linha;
+
+não iniciam uma geração desnecessária.
+
+
+40. CONVERSÃO DOS CAMPOS NUMÉRICOS
+----------------------------------
+
+Valores de campos HTML chegam como texto.
+
+Por isso, usamos:
+
+    parseFloat(...)
+
+para temperature e:
+
+    parseInt(...)
+
+para topK.
+
+Temperature pode ter decimal, como:
+
+    0.7
+
+topK representa uma quantidade inteira, como:
+
+    3
+
+Mesmo que os controles estejam desativados em uma API moderna, essa conversão
+continua documentando o conceito da versão da aula.
+
+
+41. PROMPT E PROMPTSTREAMING
+----------------------------
+
+Existem duas experiências conceituais:
+
+PROMPT
+
+- espera a resposta ser concluída;
+- entrega o resultado completo;
+- implementação visual mais simples;
+- pessoa espera sem ver o texto parcial.
+
+PROMPTSTREAMING
+
+- entrega partes durante a geração;
+- permite mostrar a resposta progressivamente;
+- melhora a percepção de velocidade;
+- combina bem com cancelamento.
+
+Nesta aula usamos:
+
+    session.promptStreaming(...)
+
+
+42. O QUE É STREAMING?
+----------------------
+
+Streaming significa processar dados conforme eles ficam disponíveis.
+
+Sem streaming:
+
+pergunta
+    |
+    v
+espera toda a geração
+    |
+    v
+mostra a resposta completa
+
+Com streaming:
+
+pergunta
+    |
+    v
+primeiro trecho -> tela
+    |
+    v
+segundo trecho -> tela
+    |
+    v
+terceiro trecho -> tela
+    |
+    v
+fim
+
+O tempo total pode ser semelhante, mas o tempo até o primeiro conteúdo visível é
+menor.
+
+
+43. ASYNC GENERATOR
+-------------------
+
+askAI é uma função geradora assíncrona.
+
+Ela combina:
+
+- async;
+- generator;
+- yield.
+
+Sua responsabilidade é:
+
+1. preparar o cancelamento;
+2. destruir a sessão anterior;
+3. montar opções;
+4. criar a sessão;
+5. iniciar promptStreaming;
+6. percorrer o stream;
+7. entregar cada trecho com yield.
+
+Em vez de retornar toda a resposta uma vez, a função produz valores ao longo do
+tempo.
+
+
+44. YIELD
+---------
+
+yield pausa temporariamente a função geradora e entrega um valor ao consumidor.
+
+No projeto:
+
+    yield chunk
+
+Cada chunk é uma parte da resposta.
+
+Depois que o consumidor pede o próximo valor, a execução continua de onde parou.
+
+Esse modelo é adequado para:
+
+- streams;
+- paginação;
+- eventos assíncronos;
+- leitura progressiva;
+- sequências cujo tamanho não é conhecido antecipadamente.
+
+
+45. FOR AWAIT
+-------------
+
+onSubmitQuestion() consome a resposta com:
+
+    for await (const chunk of aiResponseChunks)
+
+for await:
+
+- espera cada item assíncrono;
+- executa o corpo do laço;
+- solicita o próximo item;
+- termina quando o stream termina.
+
+O primeiro chunk remove a mensagem "Processando".
+
+Depois, cada trecho é acrescentado com:
+
+    output.textContent += chunk
+
+
+46. CUIDADO: CHUNK PODE SER DELTA OU ACUMULADO
+----------------------------------------------
+
+Uma API de streaming pode entregar:
+
+DELTA
+
+Cada chunk contém apenas a nova parte.
+
+Exemplo:
+
+    "Olá"
+    ", "
+    "mundo"
+
+Nesse caso, concatenar funciona:
+
+    output.textContent += chunk
+
+ACUMULADO
+
+Cada chunk contém toda a resposta produzida até aquele ponto.
+
+Exemplo:
+
+    "Olá"
+    "Olá, "
+    "Olá, mundo"
+
+Nesse caso, concatenar repetiria texto. O correto seria substituir:
+
+    output.textContent = chunk
+
+Ao atualizar a API ou o navegador, é importante confirmar o contrato atual de
+promptStreaming.
+
+
+47. ABORTCONTROLLER
+-------------------
+
+AbortController é uma API do navegador para cancelar operações assíncronas que
+aceitam um AbortSignal.
+
+O projeto cria:
+
+    new AbortController()
+
+e envia:
+
+    signal: aiContext.abortController.signal
+
+para promptStreaming.
+
+Quando a pessoa clica em Parar:
+
+    aiContext.abortController.abort()
+
+O signal passa para o estado aborted e a operação pode ser encerrada.
+
+
+48. POR QUE CANCELAMENTO É IMPORTANTE?
+--------------------------------------
+
+Sem cancelamento:
+
+- uma resposta longa continua consumindo recursos;
+- o botão Parar seria apenas visual;
+- uma nova pergunta poderia concorrer com a anterior;
+- a interface poderia receber trechos antigos;
+- a pessoa perderia controle da experiência.
+
+Antes de iniciar outra geração, o código também aborta o controlador anterior.
+
+Isso reduz o risco de duas respostas atualizarem a mesma área ao mesmo tempo.
+
+
+49. BOTÃO ENVIAR E PARAR
+------------------------
+
+A função toggleSendOrStopButton altera o estado do botão.
+
+AO INICIAR
+
+- isGenerating recebe true;
+- texto vira "Parar";
+- classe stop-button é adicionada;
+- botão recebe aparência vermelha.
+
+AO ENCERRAR
+
+- aborta uma operação restante;
+- isGenerating recebe false;
+- texto volta para "Enviar";
+- classe stop-button é removida.
+
+Um único botão representa duas ações dependendo do estado atual.
+
+
+50. CICLO DE VIDA DA SESSÃO
+---------------------------
+
+Antes de criar uma nova sessão:
+
+    aiContext.session.destroy()
+
+Isso encerra a sessão anterior.
+
+Fluxo atual:
+
+pergunta 1
+    |
+    v
+cria sessão A
+    |
+    v
+gera resposta
+    |
+    v
+pergunta 2
+    |
+    v
+destrói sessão A
+    |
+    v
+cria sessão B
+
+Consequência importante:
+
+O projeto atual não mantém uma conversa de múltiplos turnos entre perguntas.
+
+Cada envio começa com uma nova sessão e o mesmo system prompt.
+
+
+51. COMO CRIAR MEMÓRIA DE CONVERSA NO FUTURO
+--------------------------------------------
+
+Para manter contexto entre perguntas, seria possível:
+
+- reutilizar a mesma sessão;
+- armazenar histórico de mensagens;
+- limitar o tamanho do histórico;
+- resumir mensagens antigas;
+- mostrar um botão "Nova conversa";
+- destruir a sessão somente quando a conversa for encerrada.
+
+Cuidados:
+
+- sessões têm limite de contexto;
+- históricos grandes consomem mais recursos;
+- informações antigas podem influenciar respostas novas;
+- dados sensíveis não devem ser mantidos sem necessidade;
+- é necessário mostrar à pessoa quando existe memória.
+
+
+52. TRATAMENTO DE ERROS
+-----------------------
+
+onSubmitQuestion() usa:
+
+    try
+    catch
+    finally
+
+TRY
+
+- cria o generator;
+- percorre os chunks;
+- atualiza a saída.
+
+CATCH
+
+- ignora AbortError como cancelamento esperado;
+- registra outros erros no console;
+- mostra uma mensagem amigável.
+
+FINALLY
+
+- sempre devolve o botão ao estado Enviar.
+
+finally é importante porque também executa quando:
+
+- a geração conclui;
+- ocorre uma falha;
+- acontece uma exceção;
+- a operação é interrompida.
+
+
+53. ABORTERROR NÃO É UMA FALHA COMUM
+------------------------------------
+
+Quando a pessoa clica voluntariamente em Parar, a rejeição pode ter:
+
+    error.name === 'AbortError'
+
+Isso representa uma ação esperada.
+
+Mostrar uma mensagem vermelha de erro para um cancelamento voluntário prejudicaria
+a experiência.
+
+Por isso, o código diferencia:
+
+cancelamento:
+    silencioso e esperado;
+
+outro erro:
+    registrado e mostrado.
+
+
+54. TEXTCONTENT E INNERHTML
+---------------------------
+
+As respostas do modelo são inseridas com:
+
+    textContent
+
+Isso é importante porque o conteúdo é tratado como texto, não como HTML.
+
+Se o modelo gerar:
+
+    <script>...</script>
+
+textContent mostra os caracteres e não executa a tag.
+
+O código usa innerHTML apenas para montar as mensagens internas de requisitos com
+quebras <br>.
+
+REGRA DE SEGURANÇA
+
+Conteúdo vindo do usuário, do modelo ou de uma API externa não deve ser inserido
+diretamente com innerHTML sem sanitização.
+
+
+55. MENSAGENS DE ESTADO
+-----------------------
+
+A interface informa:
+
+- processando a pergunta;
+- preparando o Gemini Nano;
+- necessidade de download;
+- progresso do download;
+- incompatibilidade;
+- erro na geração.
+
+Mensagens de estado são parte da funcionalidade.
+
+Uma operação assíncrona sem feedback parece travada, mesmo quando está funcionando.
+
+Uma boa interface deve responder:
+
+1. o clique foi recebido?
+2. o que está acontecendo?
+3. ainda está trabalhando?
+4. houve erro?
+5. o que a pessoa deve fazer agora?
+
+
+56. PRIVACIDADE DA EXECUÇÃO LOCAL
+---------------------------------
+
+Depois que os componentes necessários estão instalados, a inferência do modelo
+integrado ocorre no dispositivo.
+
+Isso permite que o conteúdo da pergunta não precise ser enviado a uma API remota
+para gerar cada resposta.
+
+Benefícios possíveis:
+
+- dados permanecem no dispositivo durante a inferência;
+- menor exposição pela rede;
+- não há chave secreta de um provedor no frontend;
+- uso pode continuar sem internet após os recursos estarem disponíveis.
+
+Ainda existem responsabilidades da aplicação:
+
+- não registrar prompts sensíveis sem necessidade;
+- não enviar conteúdo a serviços de analytics indevidos;
+- explicar o que é local e o que não é;
+- proteger dados salvos no navegador;
+- não prometer privacidade além do comportamento real do sistema.
+
+O fato de o modelo ser local não torna automaticamente todo o site privado.
+
+
+57. SEGURANÇA E CONTEÚDO GERADO
+-------------------------------
+
+Um modelo de linguagem pode produzir:
+
+- informação incorreta;
+- código inseguro;
+- instruções incompletas;
+- conteúdo enviesado;
+- respostas que parecem confiantes sem estarem corretas.
+
+Para casos reais, é necessário:
+
+- informar que o conteúdo é gerado por IA;
+- validar resultados críticos;
+- não executar código gerado automaticamente;
+- limitar tamanhos de entrada;
+- aplicar políticas adequadas ao domínio;
+- registrar erros técnicos sem guardar dados sensíveis;
+- criar fallback quando o modelo falhar.
+
+Em áreas médicas, jurídicas ou financeiras, uma resposta fluente não substitui
+validação profissional.
+
+
+58. O MODELO PODE ALUCINAR
+--------------------------
+
+Alucinação é quando o modelo gera informação falsa ou não sustentada, mas com
+aparência convincente.
+
+Isso acontece porque o objetivo básico da geração é produzir uma sequência
+plausível, não consultar automaticamente uma fonte verdadeira.
+
+Formas de reduzir o risco:
+
+- dar contexto confiável;
+- solicitar que admita incerteza;
+- limitar a tarefa;
+- usar recuperação de documentos;
+- exigir referências verificáveis;
+- validar respostas;
+- não usar o modelo como única fonte de verdade.
+
+Temperature baixa pode tornar a saída mais previsível, mas não elimina
+alucinações.
+
+
+59. EXECUÇÃO PASSO A PASSO
+--------------------------
+
+PASSO 1 — ABRIR O TERMINAL
+
+Entre na pasta:
+
+    cd "/home/ricardo/Área de trabalho/unipds/machine_learning/aula_04"
+
+PASSO 2 — INSTALAR DEPENDÊNCIAS
+
+    npm install
+
+Esse comando instala http-server de acordo com package.json e package-lock.json.
+
+PASSO 3 — INICIAR O SERVIDOR
+
+    npm start
+
+PASSO 4 — IDENTIFICAR A PORTA
+
+Leia o endereço exibido no terminal.
+
+Normalmente:
+
+    http://127.0.0.1:8080
+
+Se 8080 estiver ocupada, pode aparecer:
+
+    http://127.0.0.1:8081
+
+PASSO 5 — ABRIR NO CHROME
+
+Use o endereço HTTP informado.
+
+Não abra index.html diretamente.
+
+PASSO 6 — ESCREVER UMA PERGUNTA
+
+Digite uma pergunta na textarea.
+
+PASSO 7 — CLICAR EM ENVIAR
+
+O clique permite:
+
+- iniciar o primeiro download, se necessário;
+- criar a sessão;
+- enviar o prompt;
+- mostrar a resposta em streaming.
+
+PASSO 8 — ACOMPANHAR O ESTADO
+
+Observe:
+
+- a área de saída;
+- o console;
+- a porcentagem de download;
+- o botão Enviar/Parar.
+
+
+60. COMO ENCERRAR O SERVIDOR
+----------------------------
+
+No terminal em que npm start está executando, pressione:
+
+    Ctrl + C
+
+Isso encerra o servidor local.
+
+Encerrar http-server:
+
+- não apaga os arquivos;
+- não remove o projeto;
+- não desinstala o Gemini Nano;
+- não remove node_modules;
+- apenas deixa de servir a página naquela porta.
+
+
+61. CHECKLIST ANTES DE TESTAR
+-----------------------------
+
+[ ] Estou usando uma versão recente do Google Chrome.
+[ ] A Prompt API está disponível.
+[ ] Reiniciei o navegador depois de alterar flags.
+[ ] Existe espaço livre em disco.
+[ ] A máquina atende aos requisitos.
+[ ] Executei npm install.
+[ ] Executei npm start dentro de aula_04.
+[ ] Abri http://127.0.0.1:PORTA.
+[ ] Não abri a página com file://.
+[ ] O console não mostra erro de sintaxe.
+[ ] Usei um idioma suportado pela versão instalada.
+[ ] Cliquei em Enviar para autorizar o primeiro download.
+[ ] Mantive o Chrome aberto durante o download.
+
+
+62. CHECKLIST DE DIAGNÓSTICO
+----------------------------
+
+Se a aplicação não funcionar:
+
+1. verificar a URL;
+2. confirmar que começa com http;
+3. olhar o terminal do servidor;
+4. abrir o Console do DevTools;
+5. verificar se LanguageModel existe;
+6. consultar o resultado de availability;
+7. conferir o idioma solicitado;
+8. verificar chrome://on-device-internals;
+9. verificar espaço em disco;
+10. verificar conexão no primeiro download;
+11. reiniciar o Chrome;
+12. testar com um perfil compatível;
+13. conferir mudanças da Prompt API;
+14. confirmar que create ocorre após um clique.
+
+
+63. TABELA DE PROBLEMAS E SOLUÇÕES
+----------------------------------
+
+PROBLEMA
+    CORS policy, origin null ou net::ERR_FAILED.
+
+CAUSA PROVÁVEL
+    página aberta por file://.
+
+SOLUÇÃO
+    executar npm start e abrir o endereço HTTP.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    LanguageModel is not defined.
+
+CAUSA PROVÁVEL
+    API indisponível, Chrome incompatível ou flag desativada.
+
+SOLUÇÃO
+    atualizar/configurar Chrome e testar novamente.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    availability retorna downloadable.
+
+CAUSA PROVÁVEL
+    modelo ou adaptador ainda não foi baixado.
+
+SOLUÇÃO
+    clicar em Enviar e acompanhar o progresso.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    Requires a user gesture.
+
+CAUSA PROVÁVEL
+    LanguageModel.create foi chamado automaticamente.
+
+SOLUÇÃO
+    chamar create a partir de clique, tecla ou submit.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    availability retorna downloading.
+
+CAUSA PROVÁVEL
+    download já está em andamento.
+
+SOLUÇÃO
+    aguardar, manter o navegador aberto e verificar o progresso.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    availability retorna unavailable.
+
+CAUSA PROVÁVEL
+    hardware, software, política, idioma ou opções sem suporte.
+
+SOLUÇÃO
+    testar opções suportadas e verificar os requisitos.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    temperature e topK ficam desativados.
+
+CAUSA PROVÁVEL
+    API atual não expõe LanguageModel.params na página web.
+
+SOLUÇÃO
+    usar os padrões do navegador ou uma modalidade que ofereça amostragem.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    aviso de idioma.
+
+CAUSA PROVÁVEL
+    idiomas não declarados ou combinação sem suporte.
+
+SOLUÇÃO
+    declarar idiomas esperados e usar códigos oficialmente suportados.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    texto repetido durante streaming.
+
+CAUSA PROVÁVEL
+    stream entrega valor acumulado e o código usa +=.
+
+SOLUÇÃO
+    confirmar o contrato e substituir em vez de concatenar.
+
+----------------------------------------------------------------------
+
+PROBLEMA
+    botão permanece em Parar após erro.
+
+CAUSA PROVÁVEL
+    estado não foi restaurado.
+
+SOLUÇÃO
+    manter a restauração dentro de finally.
+
+
+64. DEVTOOLS COMO FERRAMENTA DE APRENDIZADO
+-------------------------------------------
+
+O DevTools ajudou a identificar:
+
+- URL solicitada;
+- protocolo file;
+- origem null;
+- arquivo index.js bloqueado;
+- linha aproximada do erro;
+- status de availability;
+- aviso de idioma;
+- exceção NotAllowedError;
+- pilha de chamadas.
+
+Abas úteis:
+
+CONSOLE
+    erros, warnings e logs;
+
+NETWORK
+    arquivos carregados e falhas de rede;
+
+SOURCES
+    código, breakpoints e depuração;
+
+ELEMENTS
+    DOM, classes e estilos;
+
+APPLICATION
+    armazenamento e estado da aplicação.
+
+Não basta ler "deu erro".
+
+É importante identificar:
+
+- qual operação falhou;
+- em qual linha;
+- qual era o estado;
+- qual regra da plataforma foi violada;
+- qual é a correção mais próxima da causa.
+
+
+65. LOGS DO PROJETO
+-------------------
+
+O código registra no console:
+
+- parâmetros escolhidos;
+- chunks recebidos;
+- progresso do download;
+- availability;
+- parâmetros do modelo;
+- indisponibilidade dos parâmetros legados;
+- erros de geração.
+
+Logs são úteis durante desenvolvimento.
+
+Em produção:
+
+- evite registrar perguntas sensíveis;
+- reduza logs verbosos;
+- use níveis de log;
+- não exponha dados pessoais;
+- preserve informações técnicas úteis para suporte.
+
+
+66. TESTES MANUAIS IMPORTANTES
+------------------------------
+
+TESTE 1 — PERGUNTA VAZIA
+
+Resultado esperado:
+    nenhuma geração deve começar.
+
+TESTE 2 — PRIMEIRO DOWNLOAD
+
+Resultado esperado:
+    download começa somente após o clique e mostra progresso.
+
+TESTE 3 — MODELO DISPONÍVEL
+
+Resultado esperado:
+    resposta começa sem novo download completo.
+
+TESTE 4 — PARAR
+
+Resultado esperado:
+    geração é cancelada e botão volta para Enviar.
+
+TESTE 5 — DUAS PERGUNTAS
+
+Resultado esperado:
+    sessão anterior é destruída e não mistura respostas.
+
+TESTE 6 — API AUSENTE
+
+Resultado esperado:
+    mensagem orienta a ativação e botão é desativado.
+
+TESTE 7 — IDIOMA NÃO SUPORTADO
+
+Resultado esperado:
+    aplicação mostra erro ou oferece alternativa clara.
+
+TESTE 8 — PORTA OCUPADA
+
+Resultado esperado:
+    usar a porta alternativa indicada no terminal.
+
+TESTE 9 — ERRO DURANTE GERAÇÃO
+
+Resultado esperado:
+    mensagem amigável e estado visual restaurado.
+
+TESTE 10 — CONTEÚDO COM HTML
+
+Resultado esperado:
+    saída aparece como texto e não executa código.
+
+
+67. TESTES AUTOMATIZADOS QUE PODERIAM SER ADICIONADOS
+-----------------------------------------------------
+
+TESTES UNITÁRIOS
+
+- validação de pergunta vazia;
+- cálculo da porcentagem;
+- mudança de estado do botão;
+- detecção de parâmetros;
+- tratamento de availability;
+- formatação de mensagens.
+
+TESTES DE INTEGRAÇÃO
+
+- submit chama o fluxo de geração;
+- chunks atualizam output;
+- abort cancela o stream;
+- erro restaura a interface;
+- sessão anterior é destruída.
+
+MOCKS
+
+Como LanguageModel depende do Chrome, os testes podem criar uma implementação
+falsa para:
+
+- availability;
+- create;
+- params;
+- promptStreaming;
+- destroy.
+
+TESTE REAL
+
+Uma parte ainda precisa ser validada em um Chrome compatível, pois mock não prova:
+
+- download real;
+- desempenho real;
+- suporte do hardware;
+- comportamento da versão instalada.
+
+
+68. DESEMPENHO
+--------------
+
+O desempenho depende de:
+
+- tamanho do modelo;
+- CPU;
+- GPU;
+- memória;
+- comprimento do prompt;
+- tamanho da resposta;
+- estado térmico do computador;
+- tarefas concorrentes;
+- versão do Chrome.
+
+Boas práticas:
+
+- cancelar gerações que não serão usadas;
+- destruir sessões antigas;
+- limitar entradas muito extensas;
+- evitar iniciar várias sessões ao mesmo tempo;
+- mostrar streaming;
+- medir tempo até o primeiro chunk;
+- medir duração total;
+- monitorar falhas.
+
+
+69. ACESSIBILIDADE
+------------------
+
+Pontos positivos:
+
+- labels associados aos campos;
+- formulário pode ser enviado pelo teclado;
+- contraste visual forte;
+- foco visível nos inputs;
+- HTML declara o idioma;
+- botão usa texto explícito.
+
+Melhorias futuras:
+
+- adicionar aria-live à área de resposta;
+- anunciar mudança de Enviar para Parar;
+- fornecer mensagem visível para pergunta vazia;
+- não depender apenas de verde e vermelho;
+- testar navegação somente por teclado;
+- testar leitor de tela;
+- respeitar prefers-reduced-motion;
+- revisar contraste em todos os estados.
+
+
+70. EXPERIÊNCIA DO USUÁRIO
+--------------------------
+
+O primeiro download é um ponto crítico.
+
+Uma boa experiência deve informar:
+
+- por que o download é necessário;
+- que ele pode demorar;
+- que ocupa espaço;
+- que precisa ser iniciado por clique;
+- quanto já foi baixado;
+- que as próximas execuções tendem a ser mais rápidas.
+
+Também é útil:
+
+- desabilitar envios duplicados;
+- mostrar erro acionável;
+- oferecer tentativa novamente;
+- indicar ausência de suporte;
+- oferecer fallback;
+- preservar a pergunta se a geração falhar.
+
+
+71. MELHORIAS DE ARQUITETURA
+----------------------------
+
+O projeto é pequeno e mantém tudo em index.js.
+
+Em uma evolução, poderíamos separar:
+
+language-model.js
+    integração com LanguageModel;
+
+ui.js
+    elementos e atualização da interface;
+
+compatibility.js
+    requisitos, idioma e feature detection;
+
+session.js
+    ciclo de vida e histórico;
+
+errors.js
+    tradução de erros técnicos;
+
+main.js
+    composição e inicialização.
+
+Benefícios:
+
+- funções menores;
+- testes mais fáceis;
+- menor acoplamento;
+- troca do provedor;
+- manutenção mais simples.
+
+
+72. FALLBACK PARA NUVEM
+-----------------------
+
+Nem toda máquina oferecerá Gemini Nano.
+
+Uma aplicação profissional pode adotar:
+
+LanguageModel disponível
+    |
+    v
+usar modelo local
+
+LanguageModel indisponível
+    |
+    v
+pedir consentimento e usar backend com modelo remoto
+
+Cuidados:
+
+- nunca colocar chave secreta diretamente no JavaScript do navegador;
+- a chamada remota deve passar por um backend seguro;
+- explicar quando os dados sairão do dispositivo;
+- solicitar consentimento quando apropriado;
+- aplicar autenticação, limites e auditoria;
+- informar possíveis custos e dependência de rede.
+
+
+73. RECUPERAÇÃO DE CONHECIMENTO
+-------------------------------
+
+O modelo local responde com conhecimento aprendido e contexto do prompt.
+
+Para responder usando documentos privados ou atualizados, poderíamos adicionar:
+
+1. armazenamento dos documentos;
+2. divisão em trechos;
+3. busca pelos trechos relevantes;
+4. montagem de contexto;
+5. envio do contexto ao modelo;
+6. resposta com referência à fonte.
+
+Esse padrão é conhecido como RAG:
+
+    Retrieval-Augmented Generation
+
+O conceito se conecta à Aula 2:
+
+- embeddings representam conteúdo;
+- busca vetorial encontra proximidade semântica;
+- o modelo usa os resultados como contexto.
+
+Uma arquitetura futura poderia combinar:
+
+PostgreSQL + pgvector
+    |
+    v
+trechos relevantes
+    |
+    v
+Prompt API ou modelo remoto
+    |
+    v
+resposta fundamentada nos documentos
+
+
+74. O QUE FOI ADAPTADO POR NÓS
+------------------------------
+
+Além do conteúdo original da aula, adaptamos o projeto ao ambiente real usado.
+
+Alterações e reforços:
+
+1. execução por servidor HTTP;
+2. diagnóstico do erro CORS/file;
+3. verificação moderna de LanguageModel;
+4. opções explícitas de idioma;
+5. tratamento dos quatro estados de availability;
+6. início do download somente após submit;
+7. monitor de download;
+8. mensagens de estado em português;
+9. botão para baixar e enviar;
+10. AbortController para parar;
+11. destruição da sessão anterior;
+12. detecção de LanguageModel.params;
+13. fallback de parâmetros;
+14. desativação segura de controles incompatíveis;
+15. tratamento de AbortError;
+16. documentação das limitações de português;
+17. preservação dos comentários didáticos existentes;
+18. novos comentários explicando compatibilidade e gesto do usuário.
+
+
+75. COMENTÁRIOS DO CÓDIGO COMO MATERIAL DE ESTUDO
+-------------------------------------------------
+
+Os comentários foram preservados porque explicam decisões importantes:
+
+- atualização dos valores da interface;
+- obtenção dos parâmetros;
+- troca do botão;
+- destruição da sessão;
+- necessidade de gesto do usuário;
+- progresso de download;
+- compatibilidade de temperature e topK;
+- comportamento da API moderna;
+- valores padrão e máximos.
+
+Comentários úteis explicam principalmente:
+
+- por que algo existe;
+- qual limitação está sendo tratada;
+- qual decisão não é óbvia;
+- qual comportamento depende da plataforma.
+
+Um comentário não deve apenas repetir a linha de código.
+
+Exemplo pouco útil:
+
+    incrementa x
+
+Exemplo útil:
+
+    O download precisa começar dentro do submit porque o Chrome exige
+    ativação do usuário quando o modelo ainda não está instalado.
+
+
+76. DIFERENÇA ENTRE TREINAMENTO E INFERÊNCIA NESTA AULA
+-------------------------------------------------------
+
+Nesta aula, não treinamos o Gemini Nano.
+
+TREINAMENTO
+
+- ajusta os pesos do modelo;
+- exige grande volume de dados e computação;
+- ocorre antes da distribuição do modelo.
+
+INFERÊNCIA
+
+- recebe um prompt;
+- usa os pesos já aprendidos;
+- gera uma resposta.
+
+O projeto realiza inferência.
+
+O system prompt muda o comportamento dentro do contexto, mas não retreina os
+pesos do Gemini Nano.
+
+
+77. RELAÇÃO ENTRE AS QUATRO AULAS
+---------------------------------
+
+AULA 1
+
+- fundamentos iniciais de machine learning;
+- dados, treinamento e previsão.
+
+AULA 2
+
+- recomendação de produtos;
+- rede neural;
+- PostgreSQL e pgvector;
+- regras para compras e ranking.
+
+AULA 3
+
+- visão computacional;
+- YOLOv5n;
+- TensorFlow.js;
+- Web Worker;
+- detecção transformada em ação no jogo.
+
+AULA 4
+
+- IA generativa;
+- modelo de linguagem local;
+- Prompt API;
+- streaming;
+- sessões;
+- cancelamento;
+- compatibilidade do navegador.
+
+Evolução:
+
+dados tabulares
+    |
+    v
+recomendação
+    |
+    v
+imagem e detecção
+    |
+    v
+linguagem natural e geração
+
+
+78. O QUE APRENDEMOS SOBRE APIs EXPERIMENTAIS
+---------------------------------------------
+
+Uma aula pode mostrar uma versão válida da API naquele momento.
+
+Mais tarde:
+
+- métodos podem ser renomeados;
+- parâmetros podem ser removidos;
+- estados podem mudar;
+- idiomas podem variar;
+- regras de permissão podem ficar mais rigorosas;
+- funcionalidades podem exigir origin trial ou flags.
+
+Estratégia profissional:
+
+1. consultar a documentação atual;
+2. usar feature detection;
+3. tratar ausência de suporte;
+4. registrar a versão testada;
+5. criar fallback;
+6. evitar depender silenciosamente de comportamento legado;
+7. apresentar mensagem útil ao usuário.
+
+
+79. MAPA MENTAL DO CÓDIGO
+-------------------------
+
+main()
+    |
+    +--> atualiza ano
+    |
+    +--> checkRequirements()
+    |       |
+    |       +--> verifica Chrome
+    |       +--> verifica LanguageModel
+    |       +--> availability()
+    |       +--> atualiza mensagens
+    |
+    +--> consulta params quando existe
+    |
+    +--> configura temperature e topK
+    |
+    +--> setupEventListeners()
+            |
+            +--> atualiza valores dos controles
+            |
+            +--> submit
+                    |
+                    +--> Parar se já estiver gerando
+                    |
+                    +--> onSubmitQuestion()
+                            |
+                            +--> valida pergunta
+                            +--> altera botão
+                            +--> askAI()
+                            |       |
+                            |       +--> aborta geração anterior
+                            |       +--> destrói sessão anterior
+                            |       +--> cria opções
+                            |       +--> monitora download
+                            |       +--> LanguageModel.create()
+                            |       +--> promptStreaming()
+                            |       +--> yield chunks
+                            |
+                            +--> atualiza output
+                            +--> trata erro
+                            +--> restaura botão
+
+
+80. GLOSSÁRIO
+-------------
+
+AbortController
+    controlador usado para cancelar operações assíncronas.
+
+AbortSignal
+    sinal entregue à operação para comunicar cancelamento.
+
+API
+    contrato usado por programas para acessar funcionalidades.
+
+Async generator
+    função que produz valores assíncronos ao longo do tempo.
+
+Availability
+    estado de disponibilidade do modelo.
+
+Built-in AI
+    recursos de inteligência artificial integrados à plataforma.
+
+Chunk
+    parte de um dado transmitido em streaming.
+
+CORS
+    regras para compartilhamento de recursos entre origens.
+
+DOM
+    representação dos elementos HTML acessível pelo JavaScript.
+
+Feature detection
+    verificação da existência real de um recurso antes do uso.
+
+Gemini Nano
+    modelo compacto da família Gemini para execução local compatível.
+
+Gesto do usuário
+    ativação explícita como clique, toque ou tecla.
+
+IIFE
+    função criada e executada imediatamente.
+
+Inferência
+    uso de um modelo já treinado para gerar uma previsão ou resposta.
+
+LanguageModel
+    interface da Prompt API usada para disponibilidade e sessões.
+
+LLM
+    Large Language Model, modelo de linguagem de grande porte.
+
+Modelo local
+    modelo executado no dispositivo do usuário.
+
+Origin
+    combinação de protocolo, host e porta que identifica a origem.
+
+Prompt
+    instrução e contexto enviados ao modelo.
+
+Prompt API
+    API do Chrome usada para conversar com o modelo integrado.
+
+Sessão
+    contexto de interação criado para usar o modelo.
+
+Streaming
+    entrega progressiva de dados.
+
+System prompt
+    mensagem que orienta papel e comportamento do modelo.
+
+Temperature
+    parâmetro que influencia aleatoriedade na amostragem.
+
+Token
+    unidade de texto processada pelo modelo.
+
+topK
+    limite de candidatos considerados na seleção do próximo token.
+
+User prompt
+    solicitação feita pela pessoa.
+
+yield
+    instrução que entrega um valor e pausa uma função geradora.
+
+
+81. RESPONSABILIDADE DE CADA FUNÇÃO
+-----------------------------------
+
+setupEventListeners()
+
+- registra listeners dos campos;
+- atualiza números exibidos;
+- intercepta o submit;
+- decide entre enviar e parar.
+
+onSubmitQuestion()
+
+- lê e valida a pergunta;
+- converte parâmetros;
+- muda a interface para geração;
+- percorre os chunks;
+- mostra a resposta;
+- trata erros;
+- restaura o botão.
+
+toggleSendOrStopButton(isGenerating)
+
+- centraliza o estado do botão;
+- altera texto e classe;
+- aborta a operação quando volta ao modo Enviar.
+
+askAI(question, temperature, topK)
+
+- prepara AbortController;
+- encerra a sessão anterior;
+- configura idioma e system prompt;
+- monitora download;
+- adiciona parâmetros quando suportados;
+- cria a sessão;
+- inicia o streaming;
+- produz cada chunk com yield.
+
+checkRequirements()
+
+- verifica Chrome;
+- verifica LanguageModel;
+- consulta availability;
+- traduz os estados em mensagens;
+- evita iniciar download durante o load.
+
+main()
+
+- coordena a inicialização;
+- atualiza o rodapé;
+- aplica validação;
+- consulta compatibilidade de parâmetros;
+- configura os controles;
+- ativa os eventos.
+
+
+82. ESTADOS IMPORTANTES DA INTERFACE
+------------------------------------
+
+ESTADO INICIAL
+
+- botão mostra Enviar;
+- saída pode estar vazia;
+- campos exibem valores padrão.
+
+MODELO PARA BAIXAR
+
+- saída explica o download;
+- botão mostra "Baixar modelo e enviar".
+
+GERANDO
+
+- botão mostra Parar;
+- botão fica vermelho;
+- saída mostra processamento ou primeiros chunks.
+
+CANCELADO
+
+- stream recebe abort;
+- botão volta para Enviar;
+- conteúdo recebido até então pode permanecer visível.
+
+ERRO
+
+- mensagem técnica resumida aparece;
+- erro completo permanece no console;
+- botão volta para Enviar.
+
+INCOMPATÍVEL
+
+- saída explica o requisito;
+- botão fica desativado.
+
+
+83. LIMITAÇÕES ATUAIS DO PROJETO
+--------------------------------
+
+1. depende de Chrome compatível;
+2. depende de hardware e espaço suficientes;
+3. português pode não ter suporte oficial na versão testada;
+4. temperature e topK podem estar indisponíveis;
+5. a API ainda pode mudar;
+6. não existe fallback em nuvem;
+7. não existe histórico de múltiplos turnos;
+8. cada pergunta recria a sessão;
+9. não existe contador de tokens;
+10. não existe limite visual de tamanho da pergunta;
+11. não existem testes automatizados;
+12. não há tratamento especializado por tipo de exceção;
+13. não há política de conteúdo da aplicação;
+14. não há RAG ou fonte externa;
+15. respostas podem conter erros factuais.
+
+
+84. MELHORIAS FUTURAS PRIORIZADAS
+---------------------------------
+
+PRIORIDADE 1 — COMPATIBILIDADE
+
+- selecionar idiomas suportados dinamicamente;
+- melhorar mensagens de unavailable;
+- registrar a versão da API;
+- oferecer nova tentativa.
+
+PRIORIDADE 2 — EXPERIÊNCIA
+
+- barra visual de progresso;
+- estado aria-live;
+- botão Nova conversa;
+- contador de caracteres;
+- exemplos de perguntas;
+- mensagem clara ao cancelar.
+
+PRIORIDADE 3 — CONFIABILIDADE
+
+- testes unitários;
+- mocks de LanguageModel;
+- testes no Chrome real;
+- métricas de tempo e erro;
+- timeout de geração.
+
+PRIORIDADE 4 — PRODUTO
+
+- histórico opcional;
+- fallback remoto seguro;
+- RAG com documentos;
+- escolha de idioma;
+- exportação da conversa;
+- políticas específicas do domínio.
+
+
+85. PERGUNTAS PARA REVISAR A AULA
+---------------------------------
+
+1. Por que index.html não deve ser aberto com file neste projeto?
+2. O que CORS protege?
+3. Qual é a função de http-server?
+4. O servidor Node executa o Gemini Nano?
+5. O que LanguageModel.availability informa?
+6. Qual a diferença entre downloadable e unavailable?
+7. Por que o download exige um clique?
+8. O que LanguageModel.create retorna?
+9. Para que serve o system prompt?
+10. Qual é a diferença entre system e user?
+11. O que é streaming?
+12. Como for await consome a resposta?
+13. Qual é o papel de yield?
+14. Como AbortController cancela a geração?
+15. Por que AbortError não precisa ser mostrado como falha?
+16. O que temperature modifica?
+17. O que topK modifica?
+18. Por que usamos feature detection?
+19. Por que a sessão anterior é destruída?
+20. O projeto mantém memória entre perguntas?
+21. Por que usamos textContent para a resposta?
+22. O modelo foi treinado nesta aula?
+23. Quais dados são processados localmente?
+24. Por que execução local não garante privacidade de todo o site?
+25. O que fazer se português não for oficialmente suportado?
+
+
+86. RESPOSTAS RÁPIDAS PARA REVISÃO
+----------------------------------
+
+1. Porque módulos precisam de uma origem válida e file gera origem null.
+2. Controla o acesso a recursos entre origens.
+3. Entrega os arquivos da pasta por HTTP.
+4. Não. O Chrome administra e executa o modelo.
+5. Se o modelo está disponível, pode baixar, está baixando ou não é suportado.
+6. Downloadable pode ser resolvido com download; unavailable não pode ser usado
+   naquela configuração.
+7. Para impedir downloads grandes iniciados silenciosamente por páginas.
+8. Uma sessão de uso do modelo.
+9. Orientar comportamento, papel e formato das respostas.
+10. System define regras; user contém a solicitação.
+11. Entrega progressiva dos dados.
+12. Aguarda e processa cada chunk.
+13. Entrega um item produzido pelo generator.
+14. Envia um sinal de abort para a operação.
+15. Porque cancelamento voluntário é um resultado esperado.
+16. A aleatoriedade da amostragem.
+17. O número de candidatos considerados.
+18. Porque APIs experimentais variam entre ambientes e versões.
+19. Para liberar recursos e impedir mistura entre operações.
+20. Não; uma nova sessão é criada para cada pergunta.
+21. Para tratar a saída como texto, sem executar HTML.
+22. Não; realizamos inferência com modelo pré-treinado.
+23. Prompt e geração são processados no dispositivo após a instalação.
+24. Porque o restante do site ainda pode armazenar ou enviar dados.
+25. Usar idioma suportado, mostrar a limitação ou oferecer fallback.
+
+
+87. CHECKLIST DO QUE FOI CONCLUÍDO
+----------------------------------
+
+[x] Criar a interface de pergunta e resposta.
+[x] Usar script JavaScript do tipo module.
+[x] Configurar servidor HTTP local.
+[x] Diagnosticar erro de CORS em file.
+[x] Verificar a presença de LanguageModel.
+[x] Consultar availability.
+[x] Tratar available.
+[x] Tratar downloadable.
+[x] Tratar downloading.
+[x] Tratar unavailable.
+[x] Informar idiomas esperados.
+[x] Documentar limitação de português.
+[x] Respeitar o gesto do usuário.
+[x] Acompanhar o download.
+[x] Criar sessão com system prompt.
+[x] Enviar pergunta como user prompt.
+[x] Gerar resposta em streaming.
+[x] Usar async generator.
+[x] Usar yield.
+[x] Consumir com for await.
+[x] Atualizar a tela progressivamente.
+[x] Permitir o cancelamento.
+[x] Tratar AbortError.
+[x] Restaurar o botão em finally.
+[x] Destruir a sessão anterior.
+[x] Explicar temperature.
+[x] Explicar topK.
+[x] Detectar LanguageModel.params.
+[x] Desativar parâmetros incompatíveis.
+[x] Preservar os comentários da aula.
+[x] Adicionar comentários sobre as correções.
+[x] Documentar execução e diagnóstico.
+
+
+88. FONTES PARA CONSULTA FUTURA
+-------------------------------
+
+Documentação inicial da IA integrada ao Chrome:
+
+    https://developer.chrome.com/docs/ai/get-started
+
+Documentação da Prompt API:
+
+    https://developer.chrome.com/docs/ai/prompt-api
+
+Página interna para diagnóstico:
+
+    chrome://on-device-internals
+
+Flags usadas durante desenvolvimento:
+
+    chrome://flags/#optimization-guide-on-device-model
+    chrome://flags/#prompt-api-for-gemini-nano
+
+Ao consultar este material no futuro, confira a documentação atual.
+
+A Prompt API é uma tecnologia em evolução e o comportamento de versões futuras
+pode ser diferente do registrado nesta aula.
+
+
+89. RESUMO FINAL
+----------------
+
+Nesta aula, construímos uma aplicação web que conversa com um modelo de linguagem
+local administrado pelo Chrome.
+
+O HTML criou:
+
+- campos de parâmetros;
+- área da pergunta;
+- botão;
+- área de resposta.
+
+O CSS criou:
+
+- layout escuro;
+- destaques verdes;
+- estados de foco;
+- botão vermelho para cancelamento;
+- saída preparada para texto com quebras de linha.
+
+O JavaScript:
+
+- armazenou referências do DOM;
+- centralizou o estado;
+- verificou requisitos;
+- consultou availability;
+- tratou os estados do modelo;
+- esperou o gesto do usuário;
+- acompanhou o download;
+- criou uma sessão;
+- definiu uma instrução de sistema;
+- enviou a pergunta;
+- recebeu a resposta em streaming;
+- atualizou a tela por chunks;
+- permitiu cancelar;
+- destruiu sessões antigas;
+- tratou erros;
+- detectou parâmetros legados.
+
+Também resolvemos duas falhas centrais.
+
+Primeira:
+
+    file:// + module -> origin null -> bloqueio por CORS
+
+Correção:
+
+    npm start -> HTTP local -> origem válida
+
+Segunda:
+
+    create no carregamento -> sem gesto -> NotAllowedError
+
+Correção:
+
+    availability no carregamento
+    create somente depois do submit
+
+A aula mostrou que integrar IA generativa não é somente mandar uma string e
+receber outra.
+
+Uma aplicação precisa cuidar de:
+
+- compatibilidade;
+- disponibilidade;
+- download;
+- idioma;
+- permissões;
+- sessão;
+- streaming;
+- cancelamento;
+- erros;
+- segurança;
+- privacidade;
+- experiência da pessoa.
+
+
+90. FRASE CENTRAL PARA LEMBRAR
+------------------------------
+
+"Uma IA local no navegador só se transforma em produto quando o sistema sabe
+verificar suporte, preparar o modelo com permissão, transmitir a resposta aos
+poucos, permitir cancelamento e explicar claramente cada estado ao usuário."
+
+
+91. DÚVIDA IMPORTANTE: CHROME, GEMINI API E OLLAMA
+--------------------------------------------------
+
+DÚVIDA QUE SURGIU DURANTE A AULA
+
+Se o Gemini Nano está baixado no computador e usa a CPU ou GPU local, por que
+isso seria diferente de criar um projeto comum, baixar uma IA e executá-la
+localmente?
+
+RESPOSTA
+
+O conceito principal é realmente o mesmo:
+
+    modelo instalado no computador
+            |
+            v
+    CPU ou GPU do cliente
+            |
+            v
+    resposta gerada localmente
+
+A diferença não está no resultado visual.
+
+A diferença está em quem administra as partes necessárias para o modelo
+funcionar.
+
+Um modelo local precisa de pelo menos três camadas:
+
+1. pesos do modelo;
+2. motor de inferência;
+3. API para a aplicação conversar com esse motor.
+
+NA PROMPT API DO CHROME
+
+O Chrome administra:
+
+- download do Gemini Nano;
+- escolha da variante adequada ao hardware;
+- armazenamento;
+- atualizações;
+- remoção quando necessário;
+- motor de inferência;
+- uso de CPU ou GPU;
+- isolamento e permissões;
+- API LanguageModel.
+
+Nosso projeto apenas utiliza a interface fornecida:
+
+    projeto
+        |
+        v
+    LanguageModel
+        |
+        v
+    Gemini Nano administrado pelo Chrome
+
+Por isso, podemos dizer de maneira informal que o Google e o Chrome entregam a
+infraestrutura "mastigada".
+
+O Gemini Nano realmente fica armazenado e é executado no computador, mas seus
+arquivos e seu motor são internos ao Chrome. A forma suportada de acessá-lo é
+pela API LanguageModel.
+
+NA GEMINI API DA NUVEM
+
+O fluxo é diferente:
+
+    projeto
+        |
+        v
+    backend com chave protegida
+        |
+        v
+    internet
+        |
+        v
+    servidores do Google
+        |
+        v
+    resposta
+
+Nesse caso, o Google administra o modelo e também realiza o processamento em
+seus próprios servidores.
+
+O cliente não precisa baixar o modelo e não usa sua GPU para a inferência.
+
+A aplicação envia a solicitação e recebe a resposta, mas precisa cuidar de:
+
+- backend seguro;
+- proteção da chave;
+- autenticação;
+- limites de requisição;
+- custos;
+- erros de rede;
+- privacidade dos dados;
+- disponibilidade do serviço.
+
+COM OLLAMA LOCAL
+
+O fluxo seria:
+
+    projeto
+        |
+        v
+    API local do Ollama
+        |
+        v
+    motor do Ollama
+        |
+        v
+    modelo local
+        |
+        v
+    CPU ou GPU do cliente
+
+Ollama também entrega muita complexidade pronta.
+
+ESCLARECIMENTO DA DÚVIDA
+
+A dúvida não é sobre programar ou treinar uma rede neural do zero.
+
+Ela é sobre ter de programar, configurar e administrar toda a camada necessária
+para transformar o modelo local em uma funcionalidade segura do projeto.
+
+Nesse sentido, o entendimento está correto.
+
+O desenvolvedor ou o usuário teria de cuidar de mais partes:
+
+- instalar o Ollama;
+- escolher um modelo compatível;
+- executar o download do modelo;
+- escolher a versão e a quantização do modelo;
+- garantir espaço em disco;
+- verificar memória e hardware;
+- iniciar e manter o serviço local;
+- configurar o endereço da API;
+- permitir a comunicação entre aplicação e serviço local;
+- distribuir instruções de instalação;
+- atualizar o modelo;
+- tratar máquinas sem Ollama;
+- cuidar da segurança da porta local;
+- decidir quais origens podem acessar o serviço;
+- configurar limites de requisição e concorrência;
+- limitar o tamanho dos prompts e das respostas;
+- configurar temperature, topK e outros parâmetros;
+- gerenciar contexto e histórico da conversa;
+- construir system prompts e regras da aplicação;
+- cancelar gerações;
+- tratar erros e indisponibilidade;
+- validar e exibir a saída com segurança;
+- monitorar consumo de memória, CPU e GPU.
+
+O Ollama carrega e executa os pesos, mas o projeto ainda precisa escolher qual
+arquivo ou variante do modelo será utilizado.
+
+É importante distinguir:
+
+pesos do modelo:
+    números aprendidos durante o treinamento;
+    normalmente não são editados individualmente pela aplicação;
+
+versão ou arquivo de pesos:
+    modelo e quantização que serão baixados e executados;
+    isso precisa ser escolhido e administrado;
+
+parâmetros de inferência:
+    temperature, topK, tamanho do contexto e outras opções;
+    isso precisa ser configurado ou enviado pela aplicação.
+
+Portanto:
+
+- a API do Chrome administra o Gemini Nano local para nós;
+- o Chrome também define valores padrão e limita quais parâmetros a página pode
+  controlar;
+- a Gemini API administra um modelo remoto para nós;
+- o Ollama administra boa parte da inferência local, mas nós administramos sua
+  instalação, seus modelos, seus parâmetros e sua integração;
+- mesmo com Chrome ou Gemini API, o projeto ainda é responsável pela segurança
+  da própria interface, pelas regras de negócio e pelo uso responsável da saída.
+
+COMPARAÇÃO FINAL
+
+Prompt API + Gemini Nano:
+    processamento local;
+    Chrome administra o modelo e o motor.
+
+Gemini API:
+    processamento remoto;
+    Google administra o modelo, o motor e os servidores.
+
+Ollama:
+    processamento local;
+    Ollama administra o motor;
+    projeto e usuário administram a instalação e o modelo.
+
+CONCLUSÃO DA DÚVIDA
+
+É possível construir uma experiência visualmente igual usando qualquer uma
+dessas arquiteturas.
+
+O que muda é:
+
+- onde a resposta é processada;
+- quem baixa o modelo;
+- quem fornece o motor;
+- quem administra atualizações;
+- quem paga os recursos computacionais;
+- quais dados saem do dispositivo;
+- quanto trabalho de instalação e manutenção fica com o desenvolvedor.
+
+FRASE PARA LEMBRAR
+
+"Na Aula 4, não aprendemos apenas a executar uma IA local: aprendemos a utilizar
+uma IA local cuja instalação, execução e manutenção são administradas pelo
+Chrome."
+
+
+FIM DA REFERÊNCIA DA AULA 4
+===========================
