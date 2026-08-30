@@ -1,0 +1,2880 @@
+AULA EXTRA — OPENROUTER, ROTEAMENTO E ORQUESTRAÇÃO DE MODELOS
+================================================================
+
+Referência completa sobre o uso do OpenRouter como gateway unificado para
+modelos de Inteligência Artificial, redução de acoplamento, seleção de modelos,
+roteamento entre providers, fallbacks, custo, desempenho, privacidade,
+observabilidade e arquitetura profissional.
+
+Data da pesquisa e da análise do projeto: 30/08/2026
+
+
+OBJETIVOS DA AULA
+-----------------
+
+Ao terminar esta aula, devemos entender:
+
+- o que é o OpenRouter;
+- por que ele pode ser chamado de gateway ou roteador de modelos;
+- o que ele orquestra e o que continua sendo responsabilidade da aplicação;
+- como uma API unificada reduz acoplamento com providers;
+- a diferença entre modelo e provider de inferência;
+- a diferença entre provider routing e model routing;
+- como alternar modelos sem reescrever toda a integração;
+- como criar fallbacks entre modelos;
+- como escolher provider por preço, latência ou throughput;
+- como utilizar o Auto Router;
+- como utilizar modelos gratuitos de maneira consciente;
+- como verificar capacidades, contexto e preço de cada modelo;
+- como usar structured outputs e tool calling com compatibilidade;
+- como proteger API keys;
+- como controlar custos e rate limits;
+- como tratar erros, retries, timeout e indisponibilidade;
+- como avaliar privacidade, retenção e Zero Data Retention;
+- como observar tokens, custos, modelo e provider realmente utilizados;
+- como criar uma arquitetura desacoplada mesmo do próprio OpenRouter;
+- como analisar e melhorar o experimento da pasta `aula_open-router`.
+
+
+RESPOSTA CURTA SOBRE A AULA
+---------------------------
+
+OpenRouter é uma camada unificada entre nossa aplicação e diversos modelos e
+providers de IA.
+
+Em vez de integrar diretamente cada fornecedor:
+
+    Aplicação -> API OpenAI
+    Aplicação -> API Anthropic
+    Aplicação -> API Google
+    Aplicação -> API de outro provider
+
+podemos utilizar:
+
+    Aplicação -> OpenRouter -> modelo/provider escolhido
+
+O endpoint permanece praticamente igual e o modelo pode ser selecionado por uma
+configuração. Isso reduz retrabalho, centraliza faturamento e permite fallback.
+
+Mas existe uma observação fundamental:
+
+    API unificada reduz acoplamento de integração;
+    ela não torna todos os modelos semanticamente iguais.
+
+Cada modelo ainda possui qualidade, preço, contexto, parâmetros, ferramentas,
+políticas e comportamento diferentes.
+
+
+1. O QUE É O OPENROUTER
+------------------------
+
+O OpenRouter funciona como:
+
+- gateway de APIs de IA;
+- catálogo de modelos;
+- roteador entre providers;
+- camada de compatibilidade;
+- ponto central de autenticação e faturamento;
+- mecanismo de fallback;
+- fonte de métricas de preço, latência e throughput;
+- camada de políticas de privacidade e acesso;
+- integração OpenAI-compatible para muitas aplicações.
+
+Endpoint utilizado na aula:
+
+    https://openrouter.ai/api/v1/chat/completions
+
+
+2. O OPENROUTER NÃO É UM MODELO
+--------------------------------
+
+OpenRouter não é equivalente a GPT, Claude, Gemini, Gemma, Llama ou Qwen.
+
+Uma analogia:
+
+    Modelo       = produto que realiza a inferência.
+    Provider     = infraestrutura que hospeda e executa o modelo.
+    OpenRouter   = central que escolhe e acessa produto e fornecedor.
+    Aplicação  = sistema que envia a tarefa e utiliza a resposta.
+
+Um mesmo modelo pode estar disponível por mais de um provider.
+
+Isso permite que o OpenRouter mantenha o mesmo modelo e troque a infraestrutura
+que o executa quando houver diferença de preço, velocidade ou disponibilidade.
+
+
+3. O QUE SIGNIFICA ORQUESTRAÇÃO NESTA AULA
+------------------------------------------
+
+No contexto desta aula, orquestração significa coordenar:
+
+- qual modelo receberá uma tarefa;
+- qual provider executará esse modelo;
+- qual provider será tentado primeiro;
+- qual provider será usado como fallback;
+- qual outro modelo será tentado em caso de falha;
+- quais requisitos de preço, latência e privacidade devem ser respeitados;
+- quais parâmetros precisam ser suportados;
+- como registrar consumo e custo.
+
+O OpenRouter não substitui automaticamente toda a orquestração de negócio.
+
+Continuam na aplicação:
+
+- decidir quando chamar a IA;
+- montar o prompt;
+- consultar banco ou RAG;
+- validar resposta;
+- controlar ferramentas;
+- executar regras de negócio;
+- decidir o que fazer depois da resposta;
+- avaliar a qualidade final.
+
+
+4. O PROBLEMA DO ACOPLAMENTO DIRETO
+----------------------------------
+
+Uma aplicação acoplada diretamente a um provider pode espalhar pelo código:
+
+- URL específica;
+- SDK específico;
+- nomes de modelos;
+- autenticação;
+- formatos de erro;
+- campos exclusivos;
+- regras de retry;
+- cálculo de custos;
+- lógica de streaming;
+- tratamento de tool calling.
+
+Quando o provider muda, várias partes precisam ser alteradas.
+
+Consequências:
+
+- migração lenta;
+- risco de indisponibilidade;
+- dificuldade para testar novos modelos;
+- negociação de preço limitada;
+- dependência de uma única empresa;
+- código cheio de condicionais.
+
+
+5. COMO A API UNIFICADA AJUDA
+-----------------------------
+
+Com a API unificada, a estrutura básica permanece:
+
+    POST /api/v1/chat/completions
+
+O corpo continua semelhante:
+
+    {
+      "model": "autor/modelo",
+      "messages": [...]
+    }
+
+Para testar outro modelo, muitas vezes mudamos:
+
+    "model": "provider-a/modelo-a"
+
+para:
+
+    "model": "provider-b/modelo-b"
+
+Isso é muito mais simples do que integrar uma nova API desde o início.
+
+
+6. DESACOPLAMENTO NÃO É MÁGICA
+---------------------------------
+
+Trocar somente o nome do modelo funciona melhor para recursos comuns, como:
+
+- mensagens de texto;
+- temperature;
+- max_tokens;
+- streaming básico.
+
+Pode não funcionar de maneira equivalente para:
+
+- reasoning;
+- structured outputs;
+- imagens;
+- áudio;
+- PDFs;
+- tool calling;
+- prompt caching;
+- formatos de citação;
+- limites de contexto;
+- system prompts;
+- parâmetros exclusivos.
+
+Portanto, a aplicação precisa conhecer capacidades, não apenas nomes.
+
+
+7. MODELO E PROVIDER SÃO DIMENSÕES DIFERENTES
+----------------------------------------------
+
+Modelo responde:
+
+- qual arquitetura e pesos serão usados?
+- qual qualidade podemos esperar?
+- qual janela de contexto existe?
+- quais modalidades e ferramentas são suportadas?
+
+Provider responde:
+
+- onde esse modelo será executado?
+- qual preço daquele endpoint?
+- qual latência e throughput?
+- qual disponibilidade?
+- qual política de dados?
+- qual quantização está sendo servida?
+
+
+8. PRIMEIRO TIPO: PROVIDER ROUTING
+---------------------------------
+
+Quando escolhemos um modelo específico, o OpenRouter pode escolher entre os
+providers que oferecem aquele mesmo modelo.
+
+Exemplo conceitual:
+
+    Aplicação
+       |
+       v
+    Modelo X
+       |
+       +--> Provider A
+       +--> Provider B
+       +--> Provider C
+
+Por padrão, o OpenRouter considera disponibilidade e preço e mantém providers
+restantes como fallback.
+
+O modelo continua sendo X.
+
+
+9. SEGUNDO TIPO: MODEL ROUTING
+-----------------------------
+
+Model routing troca também os pesos e o comportamento do modelo.
+
+Exemplo:
+
+    Modelo A falhou
+       |
+       v
+    tentar Modelo B
+       |
+       v
+    tentar Modelo C
+
+Isso precisa ser configurado por:
+
+- array `models`;
+- `openrouter/auto`;
+- `openrouter/free`;
+- preset;
+- política implementada na aplicação.
+
+
+10. A DISTINÇÃO MAIS IMPORTANTE
+--------------------------------
+
+Informar apenas:
+
+    "model": "google/gemma-3-27b-it:free"
+
+não significa que o OpenRouter selecionará qualquer outro modelo melhor para a
+tarefa.
+
+Ele tentará atender aquele modelo usando rotas compatíveis.
+
+Para fallback entre modelos, precisamos informar alternativas ou escolher um
+router que faça seleção de modelo.
+
+
+11. O EXPERIMENTO DA AULA
+-------------------------
+
+Arquivo estudado:
+
+    aula_open-router/request.sh
+
+Ele:
+
+1. carrega variáveis de um `.env`;
+2. define o endpoint do OpenRouter;
+3. define informações do aplicativo;
+4. escolhe um modelo em `NLP_MODEL`;
+5. envia uma requisição com `curl`;
+6. autentica com Bearer token;
+7. formata o resultado com `jq`;
+8. preserva uma resposta de exemplo nos comentários.
+
+
+12. SOURCE .ENV
+---------------
+
+Primeira linha:
+
+    source .env
+
+Ela carrega variáveis do arquivo `.env` no shell atual do script.
+
+Exemplo de conteúdo local:
+
+    OPENROUTER_API_KEY=valor_secreto
+
+O `.gitignore` do repositório ignora `.env` e `.env.*`, com exceção de um
+possível `.env.example`. Isso ajuda a impedir commit acidental da chave.
+
+Importante:
+
+`source .env` procura o arquivo no diretório atual de execução, não
+necessariamente na pasta do script.
+
+Forma esperada para a aula:
+
+    cd aula_open-router
+    bash request.sh
+
+
+13. A CHAVE DE API
+-----------------
+
+Cabeçalho:
+
+    Authorization: Bearer $OPENROUTER_API_KEY
+
+Boas práticas:
+
+- nunca escrever a chave no código;
+- nunca enviar `.env` ao Git;
+- usar uma chave por aplicação e ambiente;
+- definir limite de gasto;
+- rotacionar periodicamente;
+- revogar imediatamente se vazar;
+- não imprimir a chave em logs;
+- manter a chamada no backend.
+
+
+14. NÃO COLOQUE A CHAVE NO FRONTEND
+-----------------------------------
+
+Se uma chave permanente for colocada em JavaScript entregue ao navegador:
+
+- qualquer pessoa pode inspecioná-la;
+- terceiros podem consumir seus créditos;
+- limites podem ser esgotados;
+- dados podem ser enviados em nome do aplicativo.
+
+Arquitetura recomendada:
+
+    Navegador -> seu backend -> OpenRouter
+
+O backend protege a chave, autentica o usuário, aplica rate limit e valida o
+pedido.
+
+
+15. API_URL
+-----------
+
+O script define corretamente:
+
+    https://openrouter.ai/api/v1/chat/completions
+
+Esse endpoint segue o formato de Chat Completions compatível com o ecossistema
+OpenAI.
+
+Compatibilidade de formato não significa que todos os recursos de todos os
+providers sejam idênticos.
+
+
+16. IDENTIFICAÇÃO DO APLICATIVO
+--------------------------------
+
+O script utiliza:
+
+    HTTP-Referer
+    X-Title
+
+Esses cabeçalhos são opcionais para a inferência e servem para atribuição do
+aplicativo e analytics do OpenRouter.
+
+A documentação atual prefere:
+
+    HTTP-Referer
+    X-OpenRouter-Title
+
+`X-Title` continua aceito por compatibilidade, mas `X-OpenRouter-Title` é o nome
+atual recomendado.
+
+Para localhost, o título também deve ser informado para atribuição.
+
+
+17. ERRO DE DIGITAÇÃO NO CONTENT-TYPE
+--------------------------------------
+
+O script possui:
+
+    Content-Type: applicaton/json
+
+Falta a letra `i` em `application`.
+
+Forma correta:
+
+    Content-Type: application/json
+
+O arquivo original foi preservado, mas essa correção deve ser lembrada ao criar
+uma versão futura do exemplo.
+
+
+18. NLP_MODEL CENTRALIZA A ESCOLHA
+---------------------------------
+
+O script define:
+
+    NLP_MODEL="google/gemma-3-27b-it:free"
+
+Isso é melhor do que repetir o modelo em vários lugares.
+
+Ainda assim, em um projeto profissional a seleção deveria vir de:
+
+- configuração por ambiente;
+- arquivo de política;
+- banco de configuração;
+- feature flag;
+- preset;
+- mecanismo de roteamento por tarefa.
+
+
+19. ENTENDENDO O SLUG DO MODELO
+------------------------------
+
+Formato comum:
+
+    autor/modelo:variante
+
+No exemplo:
+
+    google/gemma-3-27b-it:free
+
+Podemos interpretar:
+
+    google          = autor ou família publicada
+    gemma-3-27b-it  = modelo e variante instruct
+    :free           = rota gratuita
+
+A disponibilidade de modelos gratuitos muda. Sempre consulte o catálogo atual.
+
+
+20. MODELOS GRATUITOS
+---------------------
+
+Vantagens:
+
+- aprender sem custo de inferência;
+- criar protótipos;
+- comparar formatos;
+- validar integração.
+
+Limitações:
+
+- rate limits menores;
+- disponibilidade variável;
+- possível latência maior;
+- mudança ou remoção da rota;
+- políticas de dados diferentes;
+- inadequados como única rota de produção.
+
+Modelos gratuitos são excelentes para aula e experimentação, mas exigem
+fallback e monitoramento em um produto real.
+
+
+21. FREE MODELS ROUTER
+----------------------
+
+O OpenRouter também oferece:
+
+    "model": "openrouter/free"
+
+Esse router escolhe entre modelos gratuitos disponíveis que atendam aos recursos
+necessários.
+
+Ele é adequado para:
+
+- estudo;
+- demonstrações;
+- protótipos;
+- cargas pequenas e não críticas.
+
+Não há controle sobre um modelo específico. Se o comportamento precisa ser
+estável, use um slug específico ou um conjunto de fallbacks controlado.
+
+
+22. CORPO DA REQUISIÇÃO
+------------------------
+
+Campos usados na aula:
+
+    model
+    messages
+    temperature
+    max_tokens
+
+`messages` contém papéis:
+
+    system
+    user
+    assistant
+
+O exemplo envia apenas uma mensagem `user`.
+
+
+23. TEMPERATURE
+---------------
+
+O script usa:
+
+    "temperature": 0.3
+
+Temperatura menor tende a produzir respostas menos variadas e mais focadas.
+
+Ela não garante:
+
+- verdade;
+- ausência de alucinação;
+- formato válido;
+- determinismo total;
+- equivalência entre modelos.
+
+Providers diferentes podem tratar amostragem de maneira ligeiramente diferente.
+
+
+24. MAX_TOKENS
+--------------
+
+O script limita a saída:
+
+    "max_tokens": 1000
+
+Isso ajuda a controlar:
+
+- custo;
+- tempo;
+- tamanho da resposta;
+- risco de geração excessiva.
+
+O nome e o comportamento exato podem variar em APIs modernas. Consulte os
+parâmetros suportados pelo modelo selecionado.
+
+
+25. A RESPOSTA DA AULA
+----------------------
+
+O exemplo comentado registra:
+
+- ID da geração;
+- provider realmente utilizado;
+- modelo;
+- escolhas;
+- motivo de finalização;
+- mensagem;
+- usage;
+- tokens;
+- custo;
+- informações de cache e reasoning.
+
+Esses campos são importantes para auditoria e observabilidade.
+
+
+26. O PROVIDER REAL APARECE NA RESPOSTA
+--------------------------------------
+
+O exemplo mostra:
+
+    "provider": "Google AI Studio"
+
+Isso confirma a separação:
+
+    modelo escolhido = google/gemma-3-27b-it:free
+    provider usado    = Google AI Studio
+
+Outro provider poderia servir um modelo equivalente em outra requisição,
+dependendo das rotas disponíveis e das preferências.
+
+
+27. USAGE E CUSTO
+-----------------
+
+O OpenRouter inclui detalhes de uso em cada resposta:
+
+- prompt_tokens;
+- completion_tokens;
+- total_tokens;
+- reasoning_tokens quando disponíveis;
+- cached_tokens;
+- custo.
+
+Em streaming, os dados completos aparecem no último evento SSE.
+
+Sempre registre custos e tokens como metadados, sem registrar conteúdo sensível
+do prompt por padrão.
+
+
+28. O EXEMPLO DE USAGE DEVE SER TRATADO COMO REGISTRO HISTÓRICO
+---------------------------------------------------------------
+
+O comentário da aula mostra texto gerado, mas `completion_tokens` igual a zero.
+
+Isso pode refletir comportamento da rota gratuita ou do registro capturado
+naquele momento. Não devemos transformar esse exemplo em regra geral.
+
+Em produção:
+
+- observe a resposta atual;
+- valide campos;
+- monitore divergências;
+- não calcule custo apenas com suposições locais.
+
+
+29. PROVIDER ROUTING PADRÃO
+---------------------------
+
+Segundo a documentação atual, quando não há `sort` nem `order`, o OpenRouter:
+
+1. evita providers com falhas recentes significativas;
+2. prioriza candidatos de menor preço;
+3. distribui tráfego com peso favorável aos mais baratos;
+4. mantém providers restantes como fallback.
+
+Isso aumenta disponibilidade sem exigir que a aplicação conheça cada endpoint.
+
+
+30. OBJETO PROVIDER
+-------------------
+
+Podemos personalizar roteamento:
+
+    {
+      "provider": {
+        "sort": "latency",
+        "allow_fallbacks": true,
+        "require_parameters": true
+      }
+    }
+
+Campos importantes:
+
+- order;
+- only;
+- ignore;
+- sort;
+- allow_fallbacks;
+- require_parameters;
+- data_collection;
+- zdr;
+- quantizations;
+- preferred_min_throughput;
+- preferred_max_latency;
+- max_price.
+
+
+31. ROTEAMENTO POR PREÇO
+-------------------------
+
+Exemplo:
+
+    "provider": {
+      "sort": "price"
+    }
+
+Objetivo:
+
+- tentar primeiro o endpoint mais barato;
+- manter outros providers como alternativas, conforme configuração.
+
+Use quando:
+
+- tarefa não é sensível a poucos segundos;
+- volume é grande;
+- modelos/providers já passaram por avaliação de qualidade.
+
+
+32. ROTEAMENTO POR LATÊNCIA
+---------------------------
+
+Exemplo:
+
+    "provider": {
+      "sort": "latency"
+    }
+
+Objetivo:
+
+- reduzir tempo até o primeiro token;
+- melhorar experiência interativa.
+
+Use em:
+
+- chat em tempo real;
+- autocomplete;
+- atendimento;
+- interfaces de voz.
+
+
+33. ROTEAMENTO POR THROUGHPUT
+----------------------------
+
+Exemplo:
+
+    "provider": {
+      "sort": "throughput"
+    }
+
+Throughput representa velocidade de geração, normalmente tokens por segundo.
+
+Use em:
+
+- respostas longas;
+- geração de documentos;
+- lotes;
+- tarefas em que tempo total importa mais que o primeiro token.
+
+
+34. LATÊNCIA E THROUGHPUT NÃO SÃO IGUAIS
+-------------------------------------------
+
+Latência baixa:
+
+- resposta começa rápido.
+
+Throughput alto:
+
+- tokens seguintes chegam rapidamente.
+
+Um provider pode iniciar rápido e gerar devagar. Outro pode demorar para iniciar
+e depois gerar muito rápido.
+
+
+35. PERCENTIS DE DESEMPENHO
+---------------------------
+
+O OpenRouter acompanha métricas como:
+
+    p50
+    p75
+    p90
+    p99
+
+p50 representa comportamento típico.
+
+p99 ajuda a avaliar a cauda ruim: aproximadamente 99% das requisições ficam
+dentro daquele limite e 1% pode ser pior.
+
+Para SLA, p90 ou p99 costuma ser mais informativo que apenas média.
+
+
+36. PREFERÊNCIAS DE DESEMPENHO
+--------------------------------
+
+Exemplo conceitual:
+
+    "provider": {
+      "preferred_max_latency": {
+        "p90": 3,
+        "p99": 5
+      },
+      "preferred_min_throughput": {
+        "p50": 100
+      }
+    }
+
+Providers fora da preferência podem ser movidos para o final, em vez de serem
+necessariamente excluídos.
+
+
+37. ORDEM EXPLÍCITA DE PROVIDERS
+--------------------------------
+
+Exemplo:
+
+    "provider": {
+      "order": ["provider-a", "provider-b"]
+    }
+
+Use quando:
+
+- existe contrato específico;
+- uma região é obrigatória;
+- um provider foi homologado;
+- deseja comportamento determinístico de rota.
+
+Definir `order` desativa o balanceamento padrão baseado em preço.
+
+
+38. ONLY E IGNORE
+-----------------
+
+Permitir somente uma lista:
+
+    "provider": {
+      "only": ["provider-a", "provider-b"]
+    }
+
+Excluir uma lista:
+
+    "provider": {
+      "ignore": ["provider-c"]
+    }
+
+Casos de uso:
+
+- compliance;
+- região;
+- qualidade;
+- incidente temporário;
+- política de dados;
+- contrato comercial.
+
+
+39. ALLOW_FALLBACKS
+-------------------
+
+Por padrão, fallbacks de provider são permitidos.
+
+Para impedir:
+
+    "provider": {
+      "allow_fallbacks": false
+    }
+
+Desativar fallback aumenta controle, mas reduz disponibilidade.
+
+Use quando é proibido sair de uma rota homologada.
+
+
+40. REQUIRE_PARAMETERS
+----------------------
+
+Exemplo:
+
+    "provider": {
+      "require_parameters": true
+    }
+
+Com `false`, um provider pode ignorar parâmetros desconhecidos.
+
+Com `true`, somente providers que suportam todos os parâmetros solicitados podem
+receber a chamada.
+
+Isso é essencial para:
+
+- JSON schema;
+- tools;
+- reasoning;
+- seed;
+- formatos específicos;
+- aplicações que não aceitam degradação silenciosa.
+
+
+41. MAX_PRICE
+-------------
+
+O campo `max_price` restringe endpoints cujo preço excede um limite.
+
+Isso ajuda a evitar que um fallback inesperado utilize uma rota muito mais cara.
+
+O limite da requisição deve ser combinado com:
+
+- limite da API key;
+- budget da aplicação;
+- alerta de custo;
+- limite de tokens;
+- timeout.
+
+
+42. FALLBACK ENTRE MODELOS
+-------------------------
+
+O array `models` recebe modelos em ordem de prioridade:
+
+    {
+      "models": [
+        "autor/modelo-principal",
+        "autor/modelo-secundario",
+        "autor/modelo-emergencia"
+      ],
+      "messages": [
+        {"role": "user", "content": "Explique a tarefa"}
+      ]
+    }
+
+Se o primeiro retornar erro, o próximo pode ser tentado automaticamente.
+
+
+43. O QUE PODE DISPARAR FALLBACK
+-------------------------------
+
+Segundo a documentação atual:
+
+- rate limit;
+- indisponibilidade;
+- erro de contexto;
+- recusa de moderação em rotas filtradas;
+- outros erros do modelo/provider.
+
+Essa amplitude exige cuidado.
+
+Um fallback não deve ser usado para contornar deliberadamente uma política de
+segurança definida pelo produto.
+
+
+44. FALLBACK MUDA COMPORTAMENTO
+-------------------------------
+
+Modelos diferentes podem produzir:
+
+- tom diferente;
+- formato diferente;
+- tradução diferente;
+- tool calls diferentes;
+- nível de segurança diferente;
+- qualidade diferente;
+- custo diferente.
+
+A resposta inclui o campo `model`. Registre-o para saber quem respondeu.
+
+
+45. FALLBACK E PREÇO
+---------------------
+
+A cobrança utiliza o modelo/provider que realmente concluiu a requisição.
+
+Portanto, o orçamento deve considerar a alternativa mais cara possível, não
+apenas o modelo principal.
+
+
+46. FALLBACK NÃO SUBSTITUI VALIDAÇÃO
+--------------------------------------
+
+O fallback resolve disponibilidade, não qualidade semântica.
+
+Depois da resposta, ainda precisamos:
+
+- validar schema;
+- aplicar regras;
+- verificar citações;
+- testar código;
+- impedir comandos perigosos;
+- checar confiança e escopo.
+
+
+47. AUTO ROUTER
+---------------
+
+Modelo virtual:
+
+    "model": "openrouter/auto"
+
+O Auto Router analisa o prompt e escolhe um modelo de um conjunto curado,
+considerando tarefa, complexidade e capacidades.
+
+A resposta informa o modelo realmente selecionado.
+
+
+48. QUANDO USAR AUTO ROUTER
+---------------------------
+
+Use quando:
+
+- prompts variam muito;
+- não sabe previamente qual tarefa chegará;
+- deseja equilibrar custo e qualidade;
+- aceita que o modelo possa variar;
+- possui avaliações para conferir resultados.
+
+Evite como caixa-preta sem medição em tarefas reguladas ou extremamente
+determinísticas.
+
+
+49. RESTRINGIR MODELOS DO AUTO ROUTER
+------------------------------------
+
+O plugin do Auto Router permite `allowed_models` com padrões:
+
+    {
+      "model": "openrouter/auto",
+      "plugins": [
+        {
+          "id": "auto-router",
+          "allowed_models": [
+            "anthropic/*",
+            "openai/*",
+            "google/*"
+          ]
+        }
+      ]
+    }
+
+Isso impede que o router escolha modelos fora da lista homologada.
+
+
+50. SESSION STICKINESS
+----------------------
+
+Uma conversa pode se beneficiar de manter o mesmo provider/modelo durante a
+sessão.
+
+O `session_id` ajuda a:
+
+- agrupar observabilidade;
+- aumentar chance de cache;
+- reduzir mudanças de comportamento no meio da conversa;
+- manter rota consistente quando suportado.
+
+Mesmo com stickiness, a aplicação deve estar preparada para fallback.
+
+
+51. VARIANTE :FREE
+------------------
+
+Exemplo:
+
+    modelo:free
+
+Características:
+
+- inferência gratuita quando rota disponível;
+- limites e disponibilidade diferentes;
+- boa para estudo;
+- não deve ser presumida eterna.
+
+
+52. VARIANTE :NITRO
+-------------------
+
+Exemplo:
+
+    modelo:nitro
+
+Equivale a priorizar providers por throughput.
+
+Use quando velocidade de geração importa mais que o menor preço.
+
+
+53. VARIANTE :EXACTO
+--------------------
+
+Exemplo:
+
+    modelo:exacto
+
+Prioriza sinais de qualidade para tool calling, em vez da ordenação padrão mais
+orientada a preço.
+
+Use em agentes nos quais ferramentas malformadas causam falhas ou risco.
+
+
+54. AUTO EXACTO
+---------------
+
+Para requisições com `tools`, o OpenRouter atual aplica automaticamente uma
+etapa de otimização de provider baseada em:
+
+- sucesso real de tool calls;
+- throughput;
+- benchmark;
+- dados de desempenho.
+
+Isso melhora roteamento, mas não elimina a necessidade de validar argumentos da
+ferramenta.
+
+
+55. :ONLINE ESTÁ DEPRECIADO
+---------------------------
+
+A variante `:online` existiu para adicionar busca web.
+
+A documentação atual recomenda a server tool:
+
+    openrouter:web_search
+
+Registrar depreciações evita criar hoje uma integração que precisará ser
+reescrita logo depois.
+
+
+56. CATÁLOGO DE MODELOS
+-----------------------
+
+Endpoint:
+
+    GET https://openrouter.ai/api/v1/models
+
+Ele permite descobrir:
+
+- ID;
+- nome;
+- descrição;
+- contexto;
+- preço;
+- modalidades;
+- parâmetros suportados;
+- limites;
+- provider principal;
+- depreciação;
+- benchmarks quando disponíveis.
+
+
+57. CONSULTAR MODELOS COM TOOLS
+------------------------------
+
+Exemplo:
+
+    curl "https://openrouter.ai/api/v1/models?supported_parameters=tools"
+
+Podemos combinar filtros de capacidade, contexto, modalidade e preço.
+
+Isso é mais seguro do que manter uma lista manual eternamente.
+
+
+58. SELEÇÃO POR CAPACIDADES
+-----------------------------
+
+Uma política madura trabalha com requisitos:
+
+    precisa_tools=true
+    precisa_json_schema=true
+    precisa_visao=false
+    contexto_minimo=32000
+    preco_maximo=X
+
+Depois seleciona modelos compatíveis.
+
+Isso reduz dependência de nomes comerciais.
+
+
+59. STRUCTURED OUTPUTS
+----------------------
+
+OpenRouter oferece JSON Schema para modelos compatíveis.
+
+Exemplo conceitual:
+
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "classificacao",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "categoria": {"type": "string"},
+            "confianca": {"type": "number"}
+          },
+          "required": ["categoria", "confianca"],
+          "additionalProperties": false
+        }
+      }
+    }
+
+
+60. SCHEMA NÃO ELIMINA VALIDAÇÃO LOCAL
+-----------------------------------------
+
+Mesmo com strict mode:
+
+- valide novamente no backend;
+- aplique limites numéricos;
+- valide enums;
+- trate recusa;
+- trate resposta vazia;
+- trate provider incompatível;
+- não confie em campos para autorização.
+
+Zod, JSON Schema, Pydantic ou equivalente continuam úteis.
+
+
+61. REQUIRE_PARAMETERS COM JSON SCHEMA
+-------------------------------------
+
+Boa combinação:
+
+    "provider": {
+      "require_parameters": true
+    }
+
+Sem isso, um provider pode ignorar um parâmetro desconhecido e devolver texto
+livre quando o projeto esperava JSON estrito.
+
+
+62. TOOL CALLING
+----------------
+
+Para agentes, o modelo pode selecionar uma ferramenta e produzir argumentos.
+
+A aplicação precisa:
+
+1. declarar schema da ferramenta;
+2. receber o tool call;
+3. validar argumentos;
+4. conferir permissão;
+5. executar em ambiente controlado;
+6. devolver o resultado ao modelo;
+7. registrar auditoria.
+
+OpenRouter roteia a chamada. Ele não conhece todas as regras de negócio da sua
+ferramenta.
+
+
+63. PRESETS
+-----------
+
+Presets separam configuração de IA do código.
+
+Um preset pode armazenar:
+
+- modelo;
+- fallbacks;
+- provider routing;
+- system prompt;
+- temperature;
+- top_p;
+- regras de inclusão e exclusão.
+
+Uso:
+
+    "model": "@preset/classificador-de-suporte"
+
+
+64. POR QUE PRESETS REDUZEM ACOPLAMENTO
+--------------------------------------
+
+O código passa a expressar intenção:
+
+    classificador-de-suporte
+    redator-de-email
+    revisor-de-codigo
+
+Em vez de detalhes:
+
+    modelo-versao-x
+    temperature-y
+    provider-z
+
+Podemos mudar modelo e roteamento sem implantar nova versão da aplicação.
+
+
+65. CUIDADO COM ALTERAÇÃO SEM DEPLOY
+-------------------------------------
+
+Essa flexibilidade também cria risco:
+
+- comportamento muda sem commit da aplicação;
+- testes antigos podem não representar a versão ativa;
+- incidente pode ser difícil de reproduzir.
+
+Boas práticas:
+
+- versionar presets;
+- registrar quem alterou;
+- executar evals antes de promover;
+- manter rollback;
+- registrar preset e versão em cada chamada.
+
+
+66. BYOK
+--------
+
+BYOK significa Bring Your Own Key.
+
+O usuário cadastra chaves dos providers e utiliza o OpenRouter como camada
+unificada.
+
+Benefícios:
+
+- controle de quotas no provider;
+- aproveitamento de contrato existente;
+- centralização de roteamento;
+- fallback entre chaves e endpoints.
+
+As chaves dos providers precisam ser tratadas como segredos críticos.
+
+
+67. OPENROUTER CREDITS E BYOK
+-----------------------------
+
+Com créditos do OpenRouter:
+
+- faturamento fica centralizado;
+- OpenRouter administra acesso aos providers;
+- limites do provider são abstraídos em parte.
+
+Com BYOK:
+
+- cobrança principal acontece no provider;
+- OpenRouter continua como gateway;
+- existem regras e possíveis taxas do serviço;
+- detalhes atuais devem ser conferidos antes de produção.
+
+Preços e taxas mudam. Não congele decisão financeira somente neste TXT.
+
+
+68. PRIVACIDADE: O PROMPT PASSA POR MAIS DE UMA CAMADA
+-----------------------------------------------------
+
+Fluxo comum:
+
+    aplicação
+       |
+       v
+    OpenRouter
+       |
+       v
+    provider de inferência
+       |
+       v
+    modelo
+
+Isso é diferente de Ollama estritamente local.
+
+Dados sensíveis precisam de avaliação contratual e técnica.
+
+
+69. POLÍTICA DO PRÓPRIO OPENROUTER
+-----------------------------------
+
+Segundo a documentação atual:
+
+- conteúdo de prompts e respostas não é armazenado por padrão;
+- logging de entrada e saída é opt-in;
+- uso de conteúdo para melhoria também é uma opção separada;
+- metadados como tokens, custo e latência são armazenados.
+
+Isso não substitui a política do provider final.
+
+
+70. PROVIDER LOGGING
+--------------------
+
+Cada provider possui regras próprias para:
+
+- retenção;
+- treinamento;
+- análise de abuso;
+- região;
+- compliance.
+
+OpenRouter disponibiliza filtros, mas a equipe precisa selecionar a política
+adequada ao seu dado.
+
+
+71. DATA_COLLECTION
+-------------------
+
+Exemplo:
+
+    "provider": {
+      "data_collection": "deny"
+    }
+
+Essa preferência evita providers classificados como capazes de utilizar dados
+conforme a política estruturada pelo OpenRouter.
+
+Se nenhuma rota atender a todas as restrições, a requisição deve falhar em vez
+de violar silenciosamente a política.
+
+
+72. ZERO DATA RETENTION
+-----------------------
+
+ZDR significa Zero Data Retention.
+
+Exemplo por requisição:
+
+    "provider": {
+      "zdr": true
+    }
+
+Somente endpoints marcados com política de retenção zero podem ser utilizados.
+
+ZDR pode reduzir o conjunto de providers e aumentar preço ou indisponibilidade.
+
+
+73. ZDR NÃO É SINÔNIMO DE "NÃO TREINA"
+--------------------------------------------
+
+Um provider pode:
+
+- não treinar, mas reter por algum período;
+- não reter e, consequentemente, não treinar;
+- possuir regra diferente por endpoint.
+
+Por isso, retenção e treinamento devem ser avaliados separadamente.
+
+
+74. LOGGING DE ENTRADA E SAÍDA
+------------------------------
+
+O OpenRouter oferece logging opt-in para debugging.
+
+Vantagens:
+
+- reproduzir falhas;
+- comparar modelos;
+- investigar prompts;
+- avaliar respostas.
+
+Riscos:
+
+- armazenar PII;
+- guardar segredos;
+- aumentar superfície de acesso;
+- criar obrigação de retenção e exclusão.
+
+Em produção, prefira metadados e amostras sanitizadas.
+
+
+75. SEGREDOS E DADOS PESSOAIS
+-----------------------------
+
+Antes de enviar um prompt:
+
+- remover tokens e senhas;
+- mascarar CPF, e-mail e telefone quando possível;
+- minimizar dados;
+- verificar consentimento e base legal;
+- aplicar allowlist de campos;
+- impedir envio de `.env` e credenciais;
+- usar DLP ou filtros de PII.
+
+
+76. CONTROLE DE CUSTO
+---------------------
+
+Camadas recomendadas:
+
+1. `max_tokens` por requisição;
+2. modelo proporcional à tarefa;
+3. `max_price` para providers;
+4. limite de gasto na API key;
+5. budget por usuário;
+6. rate limit no backend;
+7. alerta de custo;
+8. cache;
+9. monitoramento por feature;
+10. bloqueio quando o limite for atingido.
+
+
+77. UMA CHAVE POR AMBIENTE
+--------------------------
+
+Crie chaves separadas:
+
+- desenvolvimento;
+- testes;
+- staging;
+- produção;
+- cada serviço;
+- cada equipe quando necessário.
+
+Assim podemos:
+
+- limitar gasto;
+- revogar somente o sistema comprometido;
+- identificar consumo;
+- impedir teste de usar budget de produção.
+
+
+78. RATE LIMITS
+---------------
+
+Rate limit pode existir em:
+
+- OpenRouter;
+- provider;
+- chave BYOK;
+- variante gratuita;
+- modelo;
+- backend da aplicação.
+
+Resposta comum:
+
+    HTTP 429 Too Many Requests
+
+O sistema deve aplicar retry controlado, fallback ou resposta amigável.
+
+
+79. RETRIES
+-----------
+
+Retry recomendado para falhas transitórias:
+
+- 429;
+- 500;
+- 502;
+- 503;
+- 504;
+- timeout de rede.
+
+Use:
+
+- exponential backoff;
+- jitter;
+- número máximo de tentativas;
+- deadline total;
+- observação de `Retry-After` quando presente.
+
+
+80. NÃO REPITA AÇÕES COM EFEITO COLATERAL
+-------------------------------------------
+
+Se um agente já executou uma ferramenta, repetir a geração pode duplicar:
+
+- pagamento;
+- e-mail;
+- criação de registro;
+- publicação;
+- alteração de arquivo.
+
+Use idempotency keys e estado da execução.
+
+Retry de inferência e retry de ferramenta são problemas diferentes.
+
+
+81. TIMEOUTS
+------------
+
+Configure:
+
+- timeout de conexão;
+- timeout até primeiro token;
+- timeout total;
+- timeout por ferramenta;
+- deadline do fluxo completo.
+
+Modelos de reasoning podem demorar mais. A política deve considerar o tipo de
+tarefa.
+
+
+82. CIRCUIT BREAKER
+-------------------
+
+Se uma rota falha repetidamente:
+
+- pare de insistir temporariamente;
+- utilize fallback;
+- teste recuperação depois;
+- gere alerta.
+
+O OpenRouter já considera saúde dos providers, mas um circuit breaker local
+protege sua aplicação de falhas do gateway ou de uma política específica.
+
+
+83. CAMADAS DE FALLBACK PROFISSIONAL
+-----------------------------------
+
+Camada 1:
+
+    mesmo modelo, outro provider
+
+Camada 2:
+
+    outro modelo no OpenRouter
+
+Camada 3:
+
+    outro gateway ou provider direto
+
+Camada 4:
+
+    modelo local ou fila para processamento posterior
+
+Camada 5:
+
+    resposta degradada sem IA
+
+
+84. OPENROUTER TAMBÉM É UMA DEPENDÊNCIA
+-----------------------------------------
+
+OpenRouter reduz dependência de um modelo/provider, mas introduz dependência do
+gateway.
+
+Possíveis riscos:
+
+- indisponibilidade do OpenRouter;
+- mudança de contrato;
+- mudança de preço;
+- alteração de API;
+- restrição regional;
+- conta ou crédito indisponível.
+
+Por isso, crie um adapter interno em vez de espalhar detalhes do OpenRouter pelo
+projeto.
+
+
+85. INTERFACE INTERNA DE MODELOS
+--------------------------------
+
+Exemplo conceitual:
+
+    interface ModelGateway {
+      generate(request): Promise<ModelResponse>
+      stream(request): AsyncIterable<ModelChunk>
+    }
+
+Implementações possíveis:
+
+    OpenRouterGateway
+    DirectProviderGateway
+    OllamaGateway
+    FakeGatewayForTests
+
+A regra de negócio depende de `ModelGateway`, não de um SDK específico.
+
+
+86. DTO NORMALIZADO
+-------------------
+
+Crie formato interno:
+
+    ModelRequest
+      - messages
+      - taskType
+      - requiredCapabilities
+      - maxCost
+      - deadline
+
+    ModelResponse
+      - text
+      - structuredData
+      - modelUsed
+      - providerUsed
+      - usage
+      - cost
+      - finishReason
+      - requestId
+
+Isso evita que objetos externos atravessem todas as camadas da aplicação.
+
+
+87. POLÍTICA POR TIPO DE TAREFA
+-------------------------------
+
+Exemplo:
+
+    classificação simples
+      -> modelo barato e rápido
+
+    resumo de documento
+      -> contexto grande e custo moderado
+
+    revisão de código
+      -> modelo forte em programação
+
+    decisão complexa
+      -> reasoning de maior qualidade
+
+    extração
+      -> structured outputs obrigatório
+
+O melhor modelo não é o mesmo para todas as tarefas.
+
+
+88. EXEMPLO DE CONFIGURAÇÃO DESACOPLADA
+-----------------------------------------
+
+    tasks:
+      classifier:
+        models:
+          - modelo-barato
+          - modelo-fallback
+        require:
+          - structured_outputs
+        max_cost: baixo
+
+      code_review:
+        models:
+          - modelo-codigo-forte
+          - modelo-geral-forte
+        require:
+          - tools
+          - long_context
+        max_cost: medio
+
+A aplicação pede uma capacidade. A configuração decide nomes.
+
+
+89. FEATURE FLAGS
+-----------------
+
+Use feature flags para:
+
+- trocar modelo gradualmente;
+- enviar 5% do tráfego ao candidato;
+- reverter rapidamente;
+- comparar resultados;
+- separar clientes ou regiões.
+
+Nunca migre um fluxo crítico apenas porque um benchmark público parece melhor.
+
+
+90. A/B TEST
+------------
+
+Compare:
+
+- taxa de sucesso;
+- qualidade humana;
+- aderência ao schema;
+- latência p50/p95/p99;
+- custo por tarefa concluída;
+- taxa de fallback;
+- tool call válido;
+- segurança;
+- satisfação do usuário.
+
+Custo por token isolado pode enganar. Um modelo barato que exige três tentativas
+pode custar mais por resultado correto.
+
+
+91. SHADOW TRAFFIC
+------------------
+
+Shadow traffic envia uma cópia sanitizada da tarefa a um modelo candidato sem
+usar sua resposta para o usuário.
+
+Serve para:
+
+- comparar qualidade;
+- medir latência;
+- verificar custo;
+- preparar migração.
+
+Cuidados:
+
+- dobra consumo;
+- amplia compartilhamento de dados;
+- precisa respeitar privacidade;
+- não pode duplicar ferramentas com efeitos colaterais.
+
+
+92. EVALS
+---------
+
+Crie conjunto de tarefas reais com:
+
+- entrada;
+- resultado esperado;
+- critérios;
+- casos difíceis;
+- ataques;
+- idiomas;
+- formatos.
+
+Execute evals quando:
+
+- mudar modelo;
+- mudar provider;
+- mudar prompt;
+- mudar fallback;
+- mudar temperature;
+- alterar schema;
+- atualizar preset.
+
+
+93. OBSERVABILIDADE
+-------------------
+
+Registre por requisição:
+
+- request ID interno;
+- ID da geração;
+- feature;
+- modelo solicitado;
+- modelo utilizado;
+- provider utilizado;
+- fallback aconteceu?;
+- tokens de entrada e saída;
+- custo;
+- latência até primeiro token;
+- latência total;
+- finish_reason;
+- erro normalizado;
+- cache hit/miss;
+- validação do schema.
+
+
+94. NÃO REGISTRE CONTEÚDO POR PADRÃO
+-------------------------------------
+
+Prompts podem conter:
+
+- dados pessoais;
+- código privado;
+- segredo comercial;
+- credenciais;
+- documentos.
+
+Prefira:
+
+- hash;
+- tamanho;
+- categoria;
+- IDs internos;
+- metadados;
+- amostragem sanitizada e autorizada.
+
+
+95. DASHBOARD RECOMENDADO
+-------------------------
+
+Painéis úteis:
+
+- requisições por modelo;
+- custo por feature;
+- custo por cliente;
+- taxa de erro;
+- taxa de fallback;
+- latência p95;
+- tokens por chamada;
+- respostas inválidas;
+- providers utilizados;
+- rate limits;
+- saldo e projeção mensal.
+
+
+96. ALERTAS RECOMENDADOS
+------------------------
+
+- custo por hora acima do normal;
+- saldo baixo;
+- aumento de 429;
+- aumento de 5xx;
+- fallback elevado;
+- provider inesperado;
+- modelo inesperado;
+- latência p95 alta;
+- structured output inválido;
+- tool calls com falha;
+- chave próxima do limite.
+
+
+97. RESPONSE CACHING
+--------------------
+
+O OpenRouter oferece cache de respostas idênticas quando habilitado.
+
+Benefícios:
+
+- menor latência;
+- menor custo;
+- menos consumo de rate limit.
+
+Riscos:
+
+- resposta antiga;
+- conteúdo armazenado temporariamente;
+- resultado idêntico mesmo com parâmetros estocásticos;
+- conflito com requisito de ZDR.
+
+
+98. QUANDO USAR RESPONSE CACHE
+------------------------------
+
+Bom para:
+
+- perguntas determinísticas;
+- classificação de entrada idêntica;
+- conteúdo público;
+- prompts caros e repetidos;
+- testes.
+
+Evite ou use TTL curto para:
+
+- dados atuais;
+- respostas personalizadas;
+- informação sensível;
+- tarefas em que diversidade é desejada.
+
+
+99. PROMPT CACHING
+------------------
+
+Prompt caching reaproveita prefixos grandes, como:
+
+- system prompt;
+- manual;
+- contexto RAG;
+- documentos;
+- histórico estável.
+
+O suporte e o preço variam por modelo/provider.
+
+Sticky routing ajuda a retornar ao provider onde o cache existe.
+
+
+100. CACHE E FALLBACK
+---------------------
+
+Se a requisição muda de provider:
+
+- o cache do primeiro pode não existir no segundo;
+- o custo pode aumentar;
+- a latência pode mudar.
+
+Alta disponibilidade e melhor cache podem entrar em conflito. Meça o resultado
+real.
+
+
+101. ERROS IMPORTANTES
+----------------------
+
+    400 Bad Request
+      -> JSON ou parâmetro inválido
+
+    401 Unauthorized
+      -> chave ausente ou inválida
+
+    402 Payment Required
+      -> crédito insuficiente
+
+    403 Forbidden
+      -> provider, região ou política bloqueada
+
+    404 Not Found
+      -> modelo ou rota inexistente
+
+    413 Payload Too Large
+      -> entrada grande demais
+
+    429 Too Many Requests
+      -> rate limit
+
+    5xx
+      -> falha temporária do serviço/provider
+
+
+102. NORMALIZAÇÃO DE ERROS
+----------------------------
+
+Converta erros externos em categorias internas:
+
+    InvalidRequest
+    AuthenticationFailure
+    InsufficientCredits
+    PolicyBlocked
+    ModelUnavailable
+    RateLimited
+    Timeout
+    ProviderFailure
+    InvalidModelOutput
+
+Assim a regra de negócio não depende de mensagens textuais do provider.
+
+
+103. STREAMING
+--------------
+
+Streaming entrega tokens em eventos SSE conforme são gerados.
+
+Vantagens:
+
+- resposta percebida mais rápida;
+- interface progressiva;
+- cancelamento durante geração.
+
+Cuidados:
+
+- erro pode acontecer no meio;
+- usage completo chega no final;
+- parser precisa juntar chunks;
+- fallback depois de conteúdo parcial é complexo;
+- não repita texto já mostrado.
+
+
+104. CANCELAMENTO
+-----------------
+
+Se o usuário fechar ou cancelar:
+
+- aborte a requisição HTTP;
+- pare de transmitir;
+- registre cancelamento;
+- não execute ferramentas posteriores;
+- confirme como o provider contabiliza tokens já produzidos.
+
+
+105. EXEMPLO CURL CORRIGIDO
+---------------------------
+
+Exemplo didático para uma futura versão, sem apagar o original:
+
+    curl --silent \
+      --request POST \
+      "https://openrouter.ai/api/v1/chat/completions" \
+      --header "Content-Type: application/json" \
+      --header "Authorization: Bearer $OPENROUTER_API_KEY" \
+      --header "HTTP-Referer: http://localhost:3000" \
+      --header "X-OpenRouter-Title: Aula OpenRouter" \
+      --data '{
+        "model": "google/gemma-3-27b-it:free",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Me conte uma curiosidade sobre LLMs"
+          }
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1000
+      }' | jq
+
+
+106. JSON SEGURO NO BASH
+------------------------
+
+Interpolar variáveis dentro de aspas simples é frágil.
+
+Uma alternativa é montar JSON com `jq`:
+
+    jq -n \
+      --arg model "$NLP_MODEL" \
+      --arg prompt "Me conte uma curiosidade sobre LLMs" \
+      '{
+        model: $model,
+        messages: [
+          {role: "user", content: $prompt}
+        ],
+        temperature: 0.3,
+        max_tokens: 1000
+      }'
+
+Isso escapa caracteres corretamente.
+
+
+107. EXEMPLO DE FALLBACK
+------------------------
+
+    {
+      "models": [
+        "modelo-principal",
+        "modelo-secundario",
+        "modelo-emergencia"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "Resuma este texto"
+        }
+      ],
+      "provider": {
+        "require_parameters": true,
+        "data_collection": "deny"
+      }
+    }
+
+
+108. EXEMPLO DE ROTA ECONÔMICA
+-------------------------------
+
+    {
+      "model": "modelo-homologado",
+      "messages": [...],
+      "provider": {
+        "sort": "price",
+        "max_price": {
+          "prompt": VALOR_MAXIMO,
+          "completion": VALOR_MAXIMO
+        }
+      }
+    }
+
+Use valores consultados na documentação atual.
+
+
+109. EXEMPLO DE ROTA DE BAIXA LATÊNCIA
+--------------------------------------
+
+    {
+      "model": "modelo-homologado",
+      "messages": [...],
+      "provider": {
+        "sort": "latency",
+        "preferred_max_latency": {
+          "p90": 2
+        }
+      }
+    }
+
+
+110. EXEMPLO DE PRIVACIDADE
+---------------------------
+
+    {
+      "model": "modelo-homologado",
+      "messages": [...],
+      "provider": {
+        "zdr": true,
+        "data_collection": "deny",
+        "require_parameters": true
+      }
+    }
+
+Se nenhuma rota atender, trate o erro. Não remova a proteção automaticamente.
+
+
+111. ARQUITETURA DE BACKEND RECOMENDADA
+--------------------------------------
+
+    Cliente
+       |
+       v
+    API da aplicação
+       |
+       +--> autenticação
+       +--> rate limit
+       +--> sanitização
+       +--> política de modelo
+       +--> budget
+       |
+       v
+    ModelGateway
+       |
+       v
+    OpenRouter
+       |
+       +--> provider/modelo A
+       +--> provider/modelo B
+       +--> provider/modelo C
+
+
+112. POR QUE NÃO CHAMAR DIRETAMENTE DO DOMÍNIO
+-----------------------------------------------
+
+Controllers e regras de negócio não devem montar headers do OpenRouter.
+
+Separe:
+
+- cliente HTTP;
+- adapter OpenRouter;
+- router de tarefas;
+- prompt builder;
+- validador;
+- telemetria;
+- regra de negócio.
+
+Isso facilita testes e migração.
+
+
+113. TESTES UNITÁRIOS
+----------------------
+
+Use um FakeGateway para testar:
+
+- sucesso;
+- timeout;
+- 429;
+- fallback;
+- JSON inválido;
+- recusa;
+- tool call;
+- custo acima do limite.
+
+Teste unitário não precisa gastar tokens reais.
+
+
+114. TESTES DE CONTRATO
+-----------------------
+
+Teste periodicamente contra o serviço real:
+
+- endpoint responde;
+- modelo existe;
+- parâmetros são aceitos;
+- streaming funciona;
+- schema é respeitado;
+- usage existe;
+- headers de atribuição funcionam;
+- política ZDR encontra rota.
+
+Use chave e budget exclusivos de teste.
+
+
+115. MODELOS SÃO DEPENDÊNCIAS MUTÁVEIS
+---------------------------------------
+
+Mesmo com o mesmo slug, podem ocorrer:
+
+- atualização do provider;
+- mudança de infraestrutura;
+- alteração de rota;
+- depreciação;
+- diferença de quantização;
+- mudança de preço;
+- novo limite.
+
+Evals contínuos são mais importantes que um teste feito uma única vez.
+
+
+116. ALIASES LATEST
+-------------------
+
+Aliases de modelo mais recente evitam deploy para cada versão.
+
+Vantagem:
+
+- atualização automática.
+
+Risco:
+
+- comportamento muda sem alteração no repositório.
+
+Use alias em experimentos ou com evals contínuos. Para fluxos críticos, considere
+fixar versão e migrar de maneira controlada.
+
+
+117. MODELO BARATO PARA TUDO É UMA FALSA ECONOMIA
+-------------------------------------------------
+
+Um modelo barato pode:
+
+- errar mais;
+- exigir re-prompt;
+- produzir JSON inválido;
+- chamar ferramenta errada;
+- gerar retrabalho humano.
+
+Métrica correta:
+
+    custo por tarefa correta e concluída
+
+não apenas:
+
+    custo por milhão de tokens
+
+
+118. MODELO CARO PARA TUDO TAMBÉM É DESPERDÍCIO
+--------------------------------------------------
+
+Tarefas simples como classificação, extração curta e reformatação podem ser
+resolvidas por modelos menores.
+
+Uma boa política usa modelo proporcional à complexidade.
+
+
+119. ROTEADOR LOCAL POR COMPLEXIDADE
+-----------------------------------
+
+Antes do OpenRouter, a aplicação pode classificar:
+
+    simples  -> modelo econômico
+    média    -> modelo equilibrado
+    complexa -> modelo forte
+
+Esse classificador também precisa ser avaliado. Roteamento errado pode aumentar
+custo ou reduzir qualidade.
+
+
+120. ROTEAMENTO EM CASCATA
+-------------------------
+
+Estratégia:
+
+1. tentar modelo barato;
+2. validar a resposta;
+3. escalar para modelo forte se a validação falhar.
+
+Funciona bem quando existe critério objetivo, como:
+
+- schema válido;
+- teste passou;
+- confiança calibrada;
+- resposta possui campos obrigatórios.
+
+Evite deixar o próprio modelo barato decidir sozinho se acertou.
+
+
+121. ROTEAMENTO POR USUÁRIO OU PLANO
+-----------------------------------
+
+Exemplo:
+
+    plano gratuito -> modelos econômicos
+    plano pago     -> modelos equilibrados
+    tarefa premium -> modelos fortes
+
+Ainda assim, mantenha qualidade mínima e transparência sobre limites.
+
+
+122. ROTEAMENTO POR DADO
+------------------------
+
+    dado público
+      -> conjunto amplo de providers
+
+    dado interno
+      -> providers homologados, sem treinamento
+
+    dado altamente sensível
+      -> ZDR, região aprovada ou modelo local
+
+A classificação do dado deve ocorrer antes da chamada.
+
+
+123. FALLBACK SEMÂNTICO
+------------------------
+
+Nem todo fallback precisa ocorrer somente por erro HTTP.
+
+A aplicação pode trocar quando:
+
+- schema falha;
+- resposta está vazia;
+- citações não existem;
+- teste de código falha;
+- classificador de qualidade reprova;
+- resposta excede risco permitido.
+
+Esse fallback pertence à regra da aplicação.
+
+
+124. SEGURANÇA DE TOOL CALLING
+-------------------------------
+
+Nunca permita que um modelo:
+
+- escolha qualquer comando de shell;
+- envie dinheiro sem confirmação;
+- exclua dados sem aprovação;
+- leia qualquer arquivo;
+- chame URL arbitrária;
+- use credenciais diretamente.
+
+Use:
+
+- allowlist;
+- schema;
+- sandbox;
+- menor privilégio;
+- confirmação humana;
+- idempotência;
+- auditoria.
+
+
+125. GUARDRAILS
+---------------
+
+OpenRouter oferece guardrails organizacionais para:
+
+- budget;
+- allowlist de modelos;
+- allowlist de providers;
+- ZDR;
+- detecção de prompt injection;
+- dados sensíveis;
+- filtros customizados.
+
+Guardrails do gateway complementam, mas não substituem, validações da aplicação.
+
+
+126. WORKSPACES
+---------------
+
+Workspaces ajudam a separar:
+
+- projetos;
+- equipes;
+- chaves;
+- defaults de roteamento;
+- guardrails;
+- presets;
+- observabilidade;
+- budgets.
+
+Use workspaces diferentes para ambientes ou produtos quando a governança exigir.
+
+
+127. QUANDO OPENROUTER É UMA ÓTIMA ESCOLHA
+--------------------------------------------
+
+- projeto experimenta muitos modelos;
+- quer evitar integrações repetidas;
+- precisa de fallback;
+- quer comparar preço e desempenho;
+- precisa centralizar billing;
+- quer acesso rápido a modelos novos;
+- possui cargas com necessidades diferentes;
+- aceita um gateway externo no fluxo.
+
+
+128. QUANDO UMA INTEGRAÇÃO DIRETA PODE SER MELHOR
+--------------------------------------------------
+
+- contrato exige relação direta;
+- recurso exclusivo do provider é essencial;
+- compliance proíbe intermediário;
+- latência adicional é inaceitável;
+- volume permite acordo comercial especial;
+- precisa de suporte oficial fim a fim;
+- provider oferece API que não pode ser normalizada.
+
+
+129. QUANDO MODELO LOCAL PODE SER MELHOR
+---------------------------------------
+
+- dado não pode sair da infraestrutura;
+- operação offline;
+- hardware disponível;
+- modelo local atende à qualidade;
+- custo previsível de infraestrutura;
+- latência local.
+
+Uma arquitetura pode usar OpenRouter para nuvem e Ollama como fallback local.
+
+
+130. ESTRATÉGIA HÍBRIDA
+------------------------
+
+    tarefa simples e sensível -> modelo local
+    tarefa geral              -> OpenRouter econômico
+    tarefa complexa           -> OpenRouter modelo forte
+    OpenRouter indisponível   -> fila ou fallback local
+
+Essa estratégia reduz custo e dependência, mas aumenta complexidade operacional.
+
+
+131. TROUBLESHOOTING: 401
+------------------------
+
+Verifique:
+
+- `.env` existe no diretório correto?;
+- `source .env` foi executado?;
+- variável possui valor?;
+- chave foi revogada?;
+- header possui `Bearer`?;
+- existe espaço ou quebra indevida?;
+
+Teste sem imprimir a chave:
+
+    test -n "$OPENROUTER_API_KEY" && echo "chave carregada"
+
+
+132. TROUBLESHOOTING: 400
+------------------------
+
+No script da aula, corrija mentalmente:
+
+    applicaton/json
+
+para:
+
+    application/json
+
+Depois verifique:
+
+- JSON válido;
+- modelo correto;
+- parâmetros suportados;
+- max_tokens;
+- roles;
+- aspas e interpolação Bash.
+
+
+133. TROUBLESHOOTING: 402
+------------------------
+
+Verifique:
+
+- saldo;
+- limite da chave;
+- budget do workspace;
+- modelo/fallback caro;
+- BYOK configurado;
+- cobrança pendente.
+
+
+134. TROUBLESHOOTING: 404
+------------------------
+
+O modelo pode:
+
+- ter sido removido;
+- ter slug alterado;
+- não possuir a variante;
+- estar indisponível naquela rota.
+
+Consulte:
+
+    GET /api/v1/models
+
+
+135. TROUBLESHOOTING: 429
+------------------------
+
+Soluções:
+
+- retry com backoff;
+- model fallback;
+- outro provider;
+- rota paga;
+- aumento de limites;
+- fila;
+- rate limit por usuário;
+- cache.
+
+
+136. TROUBLESHOOTING: RESPOSTA DIFERENTE ENTRE CHAMADAS
+-----------------------------------------------------
+
+Possíveis causas:
+
+- temperature;
+- seed não suportado;
+- provider diferente;
+- modelo/alias atualizado;
+- fallback;
+- contexto diferente;
+- rota quantizada diferente;
+- system prompt alterado.
+
+Registre modelo, provider, preset e parâmetros.
+
+
+137. TROUBLESHOOTING: PARÂMETRO IGNORADO
+---------------------------------------
+
+Ative:
+
+    "provider": {
+      "require_parameters": true
+    }
+
+Consulte `supported_parameters` no catálogo.
+
+
+138. TROUBLESHOOTING: FALLBACK INESPERADO
+----------------------------------------
+
+Verifique:
+
+- erro do provider primário;
+- rate limit;
+- moderação;
+- contexto;
+- disponibilidade;
+- `allow_fallbacks`;
+- lista `models`;
+- provider order;
+- filtros de privacidade.
+
+
+139. CHECKLIST PARA DESENVOLVIMENTO
+----------------------------------
+
+[ ] `.env` ignorado pelo Git.
+[ ] Uma chave exclusiva de desenvolvimento.
+[ ] Limite de gasto configurado.
+[ ] `Content-Type` correto.
+[ ] Modelo existe no catálogo.
+[ ] Parâmetros suportados.
+[ ] Timeout configurado.
+[ ] Erros normalizados.
+[ ] Logs sem prompt sensível.
+[ ] Modelo e provider utilizados registrados.
+[ ] Resposta validada.
+
+
+140. CHECKLIST PARA PRODUÇÃO
+-------------------------------
+
+[ ] Chave somente no backend.
+[ ] Autenticação de usuário.
+[ ] Rate limit por cliente.
+[ ] Budget por chave e feature.
+[ ] Provider/model allowlist.
+[ ] Política de dados definida.
+[ ] ZDR quando necessário.
+[ ] Fallback testado.
+[ ] Retry com backoff e jitter.
+[ ] Circuit breaker.
+[ ] Timeout total.
+[ ] Structured output validado localmente.
+[ ] Tools com menor privilégio.
+[ ] Evals antes de trocar modelo.
+[ ] Dashboard e alertas.
+[ ] Plano para indisponibilidade do OpenRouter.
+
+
+141. MELHORIAS FUTURAS PARA O REQUEST.SH
+---------------------------------------
+
+Sem remover o exemplo ou os comentários valiosos da aula, uma evolução futura
+pode acrescentar:
+
+- `set -euo pipefail`;
+- validação de dependências;
+- validação da chave;
+- Content-Type correto;
+- `X-OpenRouter-Title`;
+- JSON criado por `jq`;
+- timeout do curl;
+- captura do status HTTP;
+- tratamento de erros;
+- fallback entre modelos;
+- provider preferences;
+- logs de modelo, provider, custo e latência;
+- exemplo `.env.example` sem segredo.
+
+
+142. EXEMPLO DE VALIDAÇÃO DE DEPENDÊNCIAS
+-------------------------------------------
+
+    command -v curl >/dev/null || {
+      echo "curl não encontrado"
+      exit 1
+    }
+
+    command -v jq >/dev/null || {
+      echo "jq não encontrado"
+      exit 1
+    }
+
+    : "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY não definida}"
+
+
+143. O QUE APRENDEMOS COM O SCRIPT
+---------------------------------
+
+O `request.sh` demonstra:
+
+- variável de ambiente;
+- autenticação Bearer;
+- API OpenAI-compatible;
+- model slug;
+- variante gratuita;
+- messages;
+- temperature;
+- max_tokens;
+- atribuição de aplicativo;
+- resposta normalizada;
+- provider real;
+- usage e custo.
+
+
+144. PRINCIPAL EVOLUÇÃO DA AULA
+---------------------------------
+
+O script atual troca um modelo alterando uma variável.
+
+O próximo nível é selecionar por política:
+
+    tarefa -> capacidades -> modelos homologados -> providers -> fallback
+
+Essa arquitetura realmente reduz acoplamento.
+
+
+145. PERGUNTAS DE REVISÃO
+-------------------------
+
+1. OpenRouter é um modelo?
+2. O que é um provider?
+3. Qual diferença entre provider routing e model routing?
+4. Informar um modelo específico ativa escolha automática de qualquer modelo?
+5. Como criar fallback entre modelos?
+6. Para que serve `openrouter/auto`?
+7. O que faz `openrouter/free`?
+8. Qual diferença entre latência e throughput?
+9. Para que serve `require_parameters`?
+10. Por que structured output ainda precisa de validação local?
+11. O que são presets?
+12. Como presets reduzem acoplamento?
+13. Qual risco de alterar preset sem deploy?
+14. O que é BYOK?
+15. O prompt passa somente pelo OpenRouter?
+16. O que significa ZDR?
+17. OpenRouter armazena conteúdo por padrão?
+18. Providers podem ter políticas diferentes?
+19. Por que a chave não pode ficar no navegador?
+20. Qual erro existe no Content-Type do script?
+21. `X-Title` ainda funciona?
+22. Por que modelos gratuitos não devem ser a única rota de produção?
+23. Qual métrica de custo é melhor que preço por token?
+24. OpenRouter elimina vendor lock-in completamente?
+25. Como evitar acoplamento ao próprio OpenRouter?
+
+
+146. RESPOSTAS RÁPIDAS
+-----------------------
+
+1. Não, é gateway e roteador.
+2. Infraestrutura que executa o modelo.
+3. Um troca infraestrutura; o outro troca modelo.
+4. Não.
+5. Usando `models`, router, preset ou lógica local.
+6. Seleciona modelo conforme prompt e política do router.
+7. Escolhe uma rota gratuita disponível.
+8. Início da resposta versus velocidade de geração.
+9. Exigir suporte a todos os parâmetros.
+10. A regra de segurança pertence ao backend.
+11. Configurações reutilizáveis de modelo, prompt e roteamento.
+12. Retiram nomes e parâmetros do código.
+13. Comportamento pode mudar sem commit da aplicação.
+14. Utilizar suas próprias chaves de providers.
+15. Não, normalmente chega ao provider final.
+16. Zero Data Retention.
+17. Não, salvo opções de logging/uso ativadas; metadados são mantidos.
+18. Sim.
+19. Ela pode ser extraída e abusada.
+20. `applicaton/json` em vez de `application/json`.
+21. Sim, por compatibilidade; o atual é `X-OpenRouter-Title`.
+22. Limites, desempenho e disponibilidade variam.
+23. Custo por tarefa correta concluída.
+24. Não, ele próprio vira uma dependência.
+25. Criando interface e adapter internos.
+
+
+147. RESUMO DIDÁTICO
+---------------------
+
+OpenRouter oferece uma API unificada para acessar muitos modelos e providers.
+Ele reduz o acoplamento técnico, centraliza autenticação e faturamento e pode
+rotear requisições conforme preço, velocidade, disponibilidade, capacidade e
+privacidade. Provider fallback mantém o mesmo modelo em outra infraestrutura;
+model fallback tenta outro modelo. Para um sistema realmente profissional, o
+projeto também precisa de uma interface interna, configuração por tarefa,
+validação, evals, budgets, telemetria e plano de contingência. O OpenRouter
+facilita a troca, mas modelos continuam diferentes e o gateway também é uma
+dependência externa.
+
+
+148. RESUMO EXTREMAMENTE CURTO
+------------------------------
+
+OpenRouter permite acessar e trocar modelos por uma API única, com roteamento e
+fallback. O projeto ainda precisa validar capacidades, qualidade, custo e dados.
+
+
+149. FRASE CENTRAL DA AULA
+-------------------------
+
+    O melhor desacoplamento não é trocar nomes de modelos facilmente;
+    é fazer a aplicação depender de capacidades e políticas, não de fornecedores.
+
+
+150. FONTES DO PRÓPRIO PROJETO
+------------------------------
+
+Script analisado:
+
+    aula_open-router/request.sh
+
+
+151. FONTES OFICIAIS PARA CONSULTA FUTURA
+----------------------------------------
+
+OpenRouter — Quickstart:
+
+    https://openrouter.ai/docs/quickstart
+
+OpenRouter — princípios e proposta:
+
+    https://openrouter.ai/docs/guides/overview/principles
+
+OpenRouter — modelos e catálogo:
+
+    https://openrouter.ai/docs/guides/overview/models
+
+OpenRouter — provider routing:
+
+    https://openrouter.ai/docs/guides/routing/provider-selection
+
+OpenRouter — fallback entre modelos:
+
+    https://openrouter.ai/docs/guides/routing/model-fallbacks
+
+OpenRouter — Auto Router:
+
+    https://openrouter.ai/docs/guides/routing/routers/auto-router
+
+OpenRouter — Free Models Router:
+
+    https://openrouter.ai/docs/guides/routing/routers/free-router
+
+OpenRouter — variante gratuita:
+
+    https://openrouter.ai/docs/guides/routing/model-variants/free
+
+OpenRouter — variante Nitro:
+
+    https://openrouter.ai/docs/guides/routing/model-variants/nitro
+
+OpenRouter — variante Exacto:
+
+    https://openrouter.ai/docs/guides/routing/model-variants/exacto
+
+OpenRouter — Auto Exacto:
+
+    https://openrouter.ai/docs/guides/routing/auto-exacto
+
+OpenRouter — Presets:
+
+    https://openrouter.ai/docs/guides/features/presets
+
+OpenRouter — Structured Outputs:
+
+    https://openrouter.ai/docs/guides/features/structured-outputs
+
+OpenRouter — Usage Accounting:
+
+    https://openrouter.ai/docs/cookbook/administration/usage-accounting
+
+OpenRouter — BYOK:
+
+    https://openrouter.ai/docs/guides/overview/auth/byok
+
+OpenRouter — coleta de dados:
+
+    https://openrouter.ai/docs/guides/privacy/data-collection
+
+OpenRouter — políticas de providers:
+
+    https://openrouter.ai/docs/guides/privacy/provider-logging
+
+OpenRouter — Zero Data Retention:
+
+    https://openrouter.ai/docs/guides/features/zdr
+
+OpenRouter — logging de entrada e saída:
+
+    https://openrouter.ai/docs/guides/features/input-output-logging
+
+OpenRouter — response caching:
+
+    https://openrouter.ai/docs/guides/features/response-caching
+
+OpenRouter — prompt caching:
+
+    https://openrouter.ai/docs/guides/best-practices/prompt-caching
+
+OpenRouter — guardrails:
+
+    https://openrouter.ai/docs/guides/features/guardrails/overview
+
+OpenRouter — workspaces:
+
+    https://openrouter.ai/docs/guides/features/workspaces/overview
+
+OpenRouter — atribuição do aplicativo:
+
+    https://openrouter.ai/docs/app-attribution
+
+OpenRouter — perguntas frequentes e rate limits:
+
+    https://openrouter.ai/docs/faq
+
+
+FIM DA REFERÊNCIA DA AULA OPENROUTER
+=====================================
