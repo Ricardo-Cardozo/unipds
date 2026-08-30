@@ -1,0 +1,2732 @@
+AULA 05 — IA MULTIMODAL NO NAVEGADOR COM GEMINI NANO,
+TRADUÇÃO, DETECÇÃO DE IDIOMA E ARQUITETURA EM CAMADAS
+======================================================================
+
+OBJETIVO DESTA REFERÊNCIA
+-------------------------
+
+Este arquivo registra todo o conteúdo estudado e praticado na Aula 5.
+
+Ele segue o padrão das referências das Aulas 1, 2, 3 e 4 e foi preparado para
+servir como material completo de consulta futura.
+
+Nesta aula, evoluímos o chat local da Aula 4.
+
+Além de uma pergunta em texto, a aplicação pode receber:
+
+- uma imagem;
+- um arquivo de áudio;
+- uma pergunta relacionada ao arquivo.
+
+O Gemini Nano analisa a entrada multimodal e produz uma resposta em inglês.
+
+Depois:
+
+1. a aplicação detecta o idioma da resposta;
+2. verifica se ela já está em português;
+3. traduz de inglês para português quando necessário;
+4. mostra o resultado final.
+
+Também reorganizamos o código em camadas:
+
+- serviço de inteligência artificial;
+- serviço de tradução;
+- controller do formulário;
+- view da interface;
+- arquivo principal de inicialização.
+
+Durante a execução, encontramos e corrigimos um problema real:
+
+    NotAllowedError:
+    Requires a user gesture when availability is
+    "downloading" or "downloadable".
+
+O tradutor era criado automaticamente no carregamento da página. Como o pacote
+de idioma ainda precisava ser baixado, o Chrome bloqueou a operação.
+
+Corrigimos todo o fluxo para iniciar:
+
+- LanguageModel;
+- Translator;
+- LanguageDetector;
+
+somente depois do clique da pessoa no botão Enviar.
+
+Assuntos principais:
+
+1. IA multimodal.
+2. Texto, imagem e áudio.
+3. Gemini Nano.
+4. Prompt API.
+5. Translator API.
+6. Language Detector API.
+7. Modelos especializados.
+8. Download sob demanda.
+9. Gesto do usuário.
+10. Streaming.
+11. Blob e ArrayBuffer.
+12. MIME types.
+13. Preview de arquivos.
+14. Arquitetura em camadas.
+15. Services.
+16. Controller.
+17. View.
+18. Separação de responsabilidades.
+19. Estado da geração.
+20. AbortController.
+21. Sessões e contexto.
+22. Compatibilidade da API.
+23. Temperature e topK.
+24. Tratamento de erros.
+25. Segurança e privacidade.
+
+Fluxo geral:
+
+carregamento da página
+        |
+        v
+criação dos objetos de serviço, view e controller
+        |
+        v
+verificação de compatibilidade e disponibilidade
+        |
+        v
+registro dos eventos
+        |
+        v
+usuário seleciona imagem ou áudio
+        |
+        v
+view exibe preview
+        |
+        v
+usuário escreve uma pergunta e clica em Enviar
+        |
+        +--> gesto autoriza downloads pendentes
+        |
+        +--> Translator.create()
+        |
+        +--> LanguageDetector.create()
+        |
+        +--> LanguageModel.create()
+        |
+        v
+pergunta + arquivo são enviados ao Gemini Nano
+        |
+        v
+resposta em inglês chega em streaming
+        |
+        v
+LanguageDetector.detect()
+        |
+        v
+Translator.translateStreaming()
+        |
+        v
+resposta final em português
+
+
+1. QUAL É O PROBLEMA DA AULA 5?
+-------------------------------
+
+Na Aula 4, criamos um chat local baseado em texto.
+
+Na Aula 5, queremos que o modelo compreenda mais de uma modalidade.
+
+Exemplos:
+
+- anexar uma foto e perguntar o que aparece nela;
+- anexar um gráfico e pedir uma interpretação;
+- anexar um áudio e pedir um resumo;
+- anexar uma imagem e fazer uma pergunta específica;
+- conversar somente por texto, sem arquivo.
+
+Além disso, o modelo da sessão trabalha com saída em inglês.
+
+A aplicação precisa entregar o resultado final em português.
+
+O sistema completo deve:
+
+1. verificar se as APIs existem;
+2. verificar o par de tradução inglês-português;
+3. verificar o detector de idioma;
+4. verificar texto, imagem e áudio no LanguageModel;
+5. esperar um gesto antes de iniciar downloads;
+6. criar os três recursos;
+7. transformar o arquivo em formato aceito;
+8. montar uma mensagem multimodal;
+9. receber a resposta progressivamente;
+10. detectar seu idioma;
+11. traduzir quando necessário;
+12. permitir cancelamento;
+13. mostrar mensagens úteis.
+
+
+2. O QUE É MULTIMODALIDADE?
+---------------------------
+
+Modalidade é o tipo de informação processada.
+
+Exemplos:
+
+texto:
+    palavras e frases;
+
+imagem:
+    pixels e informação visual;
+
+áudio:
+    ondas sonoras, fala, música ou ruídos;
+
+vídeo:
+    sequência de imagens e, normalmente, áudio.
+
+Um sistema multimodal combina duas ou mais modalidades.
+
+Nesta aula:
+
+entrada:
+    texto obrigatório;
+    imagem opcional;
+    áudio opcional;
+
+saída:
+    texto.
+
+
+3. DIFERENÇA ENTRE AULAS 4 E 5
+------------------------------
+
+AULA 4
+
+    pergunta em texto
+            |
+            v
+    modelo de linguagem
+            |
+            v
+    resposta em texto
+
+AULA 5
+
+    pergunta em texto + imagem ou áudio
+            |
+            v
+    modelo multimodal
+            |
+            v
+    resposta em inglês
+            |
+            v
+    detecção de idioma
+            |
+            v
+    tradução
+            |
+            v
+    resposta em português
+
+A Aula 5 também separa o código em módulos com responsabilidades próprias.
+
+
+4. TRÊS APIS DE IA
+------------------
+
+O projeto utiliza três APIs integradas ao Chrome.
+
+LANGUAGEM
+
+    LanguageModel
+
+Responsabilidade:
+
+- compreender a pergunta;
+- analisar texto, imagem ou áudio;
+- gerar a resposta.
+
+TRADUÇÃO
+
+    Translator
+
+Responsabilidade:
+
+- traduzir texto de inglês para português.
+
+DETECÇÃO
+
+    LanguageDetector
+
+Responsabilidade:
+
+- classificar o idioma provável de um texto.
+
+Não são três chamadas ao mesmo objeto.
+
+Cada API representa uma tarefa e pode depender de modelos ou pacotes diferentes.
+
+
+5. MODELO FUNDACIONAL E MODELOS ESPECIALISTAS
+---------------------------------------------
+
+O LanguageModel utiliza um modelo fundacional generativo.
+
+Ele realiza tarefas abertas:
+
+- responder;
+- explicar;
+- interpretar;
+- descrever;
+- raciocinar sobre a entrada.
+
+Translator e LanguageDetector usam modelos especializados.
+
+Um modelo especialista é otimizado para uma tarefa delimitada.
+
+Tradutor:
+    recebe texto em um idioma e gera texto em outro;
+
+Detector:
+    recebe texto e ranqueia idiomas prováveis.
+
+Uma arquitetura pode combinar um modelo geral com modelos especializados.
+
+
+6. POR QUE TRADUZIR DEPOIS DA GERAÇÃO?
+--------------------------------------
+
+A sessão declara:
+
+    entrada textual em inglês;
+    saída textual em inglês.
+
+Depois, a aplicação traduz o resultado para português.
+
+Essa estratégia cria um pipeline:
+
+    modelo principal
+            |
+            v
+    resposta em idioma suportado
+            |
+            v
+    tradutor especializado
+            |
+            v
+    idioma da interface
+
+Vantagens:
+
+- respeita idiomas suportados pelo modelo principal;
+- usa uma API especializada em tradução;
+- separa geração e localização;
+- permite trocar o idioma final no futuro.
+
+Desvantagens:
+
+- aumenta o tempo total;
+- adiciona outro download;
+- pode introduzir pequenas mudanças de significado;
+- precisa tratar falha de tradução.
+
+
+7. ESTRUTURA DO PROJETO
+-----------------------
+
+aula_05/
+    controllers/
+        formController.js
+    services/
+        aiService.js
+        translationService.js
+    views/
+        view.js
+    index.html
+    index.js
+    style.css
+    package.json
+    package-lock.json
+    aula_05_referencia.txt
+
+Responsabilidades:
+
+index.html:
+    estrutura da página;
+
+style.css:
+    aparência e responsividade;
+
+index.js:
+    composição e inicialização;
+
+aiService.js:
+    Gemini Nano e Prompt API;
+
+translationService.js:
+    tradução e detecção;
+
+formController.js:
+    coordenação do fluxo;
+
+view.js:
+    leitura e atualização do DOM;
+
+package.json:
+    servidor local;
+
+aula_05_referencia.txt:
+    documentação da aula.
+
+
+8. ARQUITETURA EM CAMADAS
+-------------------------
+
+Uma camada agrupa responsabilidades relacionadas.
+
+Fluxo:
+
+HTML
+    |
+    v
+View
+    |
+    v
+FormController
+    |
+    +--> AIService
+    |
+    +--> TranslationService
+    |
+    v
+View atualiza a tela
+
+Benefícios:
+
+- código mais fácil de localizar;
+- menor acoplamento;
+- funções menores;
+- testes mais simples;
+- serviços reutilizáveis;
+- interface separada da regra.
+
+
+9. INDEX.JS COMO PONTO DE COMPOSIÇÃO
+-----------------------------------
+
+index.js importa:
+
+- AIService;
+- TranslationService;
+- View;
+- FormController.
+
+Depois instancia:
+
+    const aiService = new AIService();
+    const translationService = new TranslationService();
+    const view = new View();
+
+O controller recebe essas dependências:
+
+    new FormController(aiService, translationService, view)
+
+Essa prática é uma forma simples de injeção de dependência.
+
+O controller não cria seus próprios serviços.
+
+Ele recebe objetos prontos.
+
+
+10. FLUXO DE INICIALIZAÇÃO
+--------------------------
+
+Ao carregar a página:
+
+1. serviços e view são criados;
+2. ano do rodapé é atualizado;
+3. requisitos são verificados;
+4. erros fatais são mostrados;
+5. parâmetros são consultados;
+6. campos são inicializados;
+7. compatibilidade de amostragem é aplicada;
+8. controller é criado;
+9. event listeners são registrados.
+
+O fluxo não chama create() para recursos com download pendente.
+
+Esse detalhe é a correção central da aula.
+
+
+11. AISERVICE
+-------------
+
+AIService concentra a integração com LanguageModel.
+
+Seu estado contém:
+
+session:
+    sessão atual;
+
+abortController:
+    controlador de cancelamento;
+
+supportsSamplingParameters:
+    informa se temperature e topK são aceitos.
+
+Seus métodos principais são:
+
+- getSessionCapabilities();
+- checkRequirements();
+- getParams();
+- createSession();
+- abort();
+- isAborted().
+
+
+12. TRANSLATIONSERVICE
+----------------------
+
+TranslationService concentra:
+
+- Translator;
+- LanguageDetector;
+- inicialização;
+- progresso dos downloads;
+- detecção;
+- tradução;
+- fallback para texto original.
+
+Seu estado contém:
+
+translator:
+    instância do tradutor inglês-português;
+
+languageDetector:
+    instância do detector.
+
+Depois de inicializados, os objetos são reutilizados.
+
+
+13. FORMCONTROLLER
+------------------
+
+FormController coordena:
+
+- eventos do formulário;
+- leitura da view;
+- início dos serviços;
+- geração;
+- streaming;
+- tradução;
+- cancelamento;
+- mudança do botão;
+- mensagens de erro.
+
+Ele conhece interfaces dos serviços e da view, mas não acessa diretamente o DOM.
+
+
+14. VIEW
+--------
+
+View centraliza o DOM.
+
+Ela:
+
+- armazena referências;
+- lê pergunta;
+- lê parâmetros;
+- lê arquivo;
+- atualiza saída;
+- mostra erros;
+- muda estado do botão;
+- cria preview;
+- registra callbacks de eventos.
+
+O controller pede ações de alto nível:
+
+    view.setOutput(...)
+    view.getQuestionText()
+    view.setButtonToStopMode()
+
+Isso evita espalhar document.getElementById pelo projeto.
+
+
+15. HTML DA AULA
+----------------
+
+O formulário contém:
+
+- temperature;
+- topK;
+- botão de arquivo;
+- input file oculto;
+- nome do arquivo;
+- preview;
+- textarea;
+- botão Enviar;
+- área de saída.
+
+O input aceita:
+
+    image/*
+    audio/*
+
+Isso filtra a escolha do arquivo na interface.
+
+Entretanto, accept não é uma validação de segurança completa.
+
+O JavaScript e uma aplicação real ainda devem validar:
+
+- MIME type;
+- extensão;
+- tamanho;
+- conteúdo;
+- limites do modelo.
+
+
+16. INPUT FILE OCULTO
+---------------------
+
+O input nativo usa:
+
+    hidden
+
+Um botão visual chama:
+
+    triggerFileInput()
+
+que executa:
+
+    this.elements.fileInput.click()
+
+Assim:
+
+- preservamos o seletor nativo;
+- controlamos a aparência do botão;
+- mantemos a seleção de arquivos do navegador.
+
+
+17. PREVIEW DE IMAGEM
+---------------------
+
+Quando o arquivo é uma imagem:
+
+1. View cria um elemento img;
+2. chama URL.createObjectURL(file);
+3. atribui a URL temporária ao src;
+4. adiciona uma classe;
+5. insere a imagem no preview.
+
+Object URL evita converter toda a imagem para Base64 apenas para visualizar.
+
+Melhoria futura:
+
+Ao remover ou substituir o arquivo, chamar:
+
+    URL.revokeObjectURL(...)
+
+Isso libera a URL temporária.
+
+
+18. PREVIEW DE ÁUDIO
+--------------------
+
+Quando o arquivo é áudio:
+
+1. View cria um elemento audio;
+2. usa URL.createObjectURL(file);
+3. ativa controls;
+4. insere o player.
+
+A pessoa pode conferir o arquivo antes de enviá-lo ao modelo.
+
+
+19. REMOÇÃO DO ARQUIVO
+----------------------
+
+O botão Remover:
+
+- limpa o valor do input;
+- limpa o preview;
+- remove o nome;
+- remove a classe selected.
+
+Isso garante que getFile() não devolva o arquivo removido.
+
+
+20. MIME TYPE
+-------------
+
+MIME type descreve o tipo de mídia.
+
+Exemplos:
+
+    image/png
+    image/jpeg
+    audio/mpeg
+    audio/wav
+
+O código executa:
+
+    file.type.split('/')[0]
+
+Resultado:
+
+    image/png  -> image
+    audio/mpeg -> audio
+
+Somente image e audio são adicionados ao prompt.
+
+
+21. ARRAYBUFFER E BLOB
+----------------------
+
+O arquivo selecionado é lido com:
+
+    await file.arrayBuffer()
+
+ArrayBuffer representa bytes brutos na memória.
+
+Depois:
+
+    new Blob([arrayBuffer], { type: file.type })
+
+Blob representa dados binários com um tipo de mídia.
+
+Fluxo:
+
+File
+    |
+    v
+ArrayBuffer
+    |
+    v
+Blob tipado
+    |
+    v
+conteúdo multimodal
+
+File já é um tipo de Blob no navegador. A conversão explícita preserva a intenção
+didática e garante um objeto binário com o MIME declarado.
+
+
+22. CAPACIDADES DA SESSÃO
+-------------------------
+
+getSessionCapabilities() declara:
+
+expectedInputs:
+
+- texto em inglês;
+- áudio;
+- imagem.
+
+expectedOutputs:
+
+- texto em inglês.
+
+Essas opções informam o contrato esperado.
+
+A mesma configuração é usada em:
+
+- LanguageModel.availability();
+- LanguageModel.create().
+
+Isso é importante porque uma máquina pode suportar texto, mas não uma modalidade
+adicional.
+
+
+23. DISPONIBILIDADE E CAPACIDADE
+--------------------------------
+
+availability não pergunta apenas:
+
+    "Existe algum modelo?"
+
+Ela pergunta:
+
+    "Existe suporte para estas opções?"
+
+O resultado depende de:
+
+- idioma;
+- entrada de imagem;
+- entrada de áudio;
+- saída;
+- hardware;
+- versão do Chrome;
+- downloads;
+- políticas.
+
+Estados atuais:
+
+available:
+    pronto;
+
+downloadable:
+    precisa baixar componentes;
+
+downloading:
+    download em andamento;
+
+unavailable:
+    configuração não suportada.
+
+
+24. VERIFICAÇÃO DE REQUISITOS
+-----------------------------
+
+checkRequirements() verifica:
+
+1. indicação de Chrome;
+2. existência de LanguageModel;
+3. existência de Translator;
+4. disponibilidade de inglês para português;
+5. existência de LanguageDetector;
+6. disponibilidade do detector;
+7. disponibilidade multimodal do LanguageModel.
+
+Somente unavailable é tratado como falha definitiva.
+
+downloadable e downloading não são erros.
+
+Nesses estados, a aplicação espera o clique.
+
+
+25. FLAGS E COMPATIBILIDADE
+---------------------------
+
+As mensagens do projeto indicam flags como:
+
+Prompt API:
+
+    chrome://flags/#prompt-api-for-gemini-nano
+
+Translation API:
+
+    chrome://flags/#translation-api
+
+Language Detection API:
+
+    chrome://flags/#language-detector-api
+
+Flags são experimentais e podem mudar.
+
+Em versões estáveis futuras, uma API pode:
+
+- não exigir flag;
+- mudar o nome da flag;
+- mudar opções;
+- ser disponibilizada gradualmente.
+
+Sempre prefira feature detection:
+
+    'LanguageModel' in self
+    'Translator' in self
+    'LanguageDetector' in self
+
+
+26. ERRO ENCONTRADO NA INICIALIZAÇÃO
+------------------------------------
+
+O console mostrou:
+
+    Error initializing translation:
+    NotAllowedError:
+    Requires a user gesture when availability is
+    "downloading" or "downloadable".
+
+Pilha aproximada:
+
+    TranslationService.initialize()
+            |
+            v
+    Translator.create()
+            |
+            v
+    main()
+
+A página carregava e main() chamava:
+
+    await translationService.initialize()
+
+initialize() chamava Translator.create().
+
+Não existia clique, tecla ou toque associado.
+
+O Chrome recusou iniciar o download.
+
+
+27. POR QUE O CHROME EXIGE UM GESTO?
+------------------------------------
+
+Modelos e pacotes de idioma ocupam armazenamento e consomem rede.
+
+Sem a regra, uma página poderia iniciar downloads automaticamente ao ser aberta.
+
+O gesto demonstra intenção.
+
+Exemplos:
+
+- clique;
+- toque;
+- tecla;
+- submit do formulário.
+
+REGRA
+
+Quando availability retorna downloadable ou downloading, create() deve nascer de
+uma interação válida.
+
+
+28. O PROBLEMA EXISTIA EM MAIS DE UM LUGAR
+------------------------------------------
+
+Translator.create() era chamado no load.
+
+LanguageModel.create() também podia ser chamado dentro de checkRequirements()
+quando o estado era downloadable.
+
+Portanto, corrigir somente o tradutor esconderia o primeiro erro, mas o modelo de
+linguagem poderia falhar depois.
+
+A correção completa removeu todas as criações automáticas.
+
+
+29. CORREÇÃO NO INDEX.JS
+------------------------
+
+index.js não inicializa mais Translator e LanguageDetector durante o load.
+
+Ele:
+
+- cria os objetos;
+- verifica recursos;
+- configura a tela;
+- registra os eventos.
+
+Um comentário registra por que initialize() não fica ali.
+
+Isso preserva a decisão para consultas futuras.
+
+
+30. CORREÇÃO NO CHECKREQUIREMENTS
+---------------------------------
+
+checkRequirements() continua chamando availability().
+
+Ele não chama create().
+
+Para downloadable:
+
+- registra que o modelo será baixado após Enviar;
+- não adiciona erro;
+- permite a inicialização da interface.
+
+Para downloading:
+
+- informa que a preparação ocorrerá após o clique;
+- não bloqueia.
+
+Para unavailable:
+
+- adiciona erro;
+- impede o uso incompatível.
+
+
+31. CORREÇÃO NO SUBMIT
+----------------------
+
+handleSubmit() é executado a partir do evento submit.
+
+Antes do primeiro await, ele inicia:
+
+    translationService.initialize()
+
+e:
+
+    aiService.createSession()
+
+Assim, as chamadas create() nascem dentro do clique.
+
+Depois:
+
+    Promise.all(...)
+
+aguarda os recursos.
+
+
+32. POR QUE INICIAR ANTES DO PRIMEIRO AWAIT?
+--------------------------------------------
+
+Uma função async executa sincronamente até encontrar o primeiro await.
+
+Se fizermos:
+
+    await prepararTradutor()
+    await prepararModelo()
+
+a segunda operação começará muito depois do evento original.
+
+No código corrigido:
+
+    const translationInitialization = ...
+    const aiSessionCreation = ...
+
+    await Promise.all([...])
+
+As duas operações são iniciadas imediatamente.
+
+TranslationService também cria as Promises do Translator e LanguageDetector antes
+de aguardar.
+
+
+33. PROMISE.ALL
+---------------
+
+Promise.all recebe várias Promises.
+
+Ele:
+
+- inicia tarefas independentes;
+- espera todas;
+- devolve os resultados na ordem fornecida;
+- rejeita se uma delas falhar.
+
+Na aula:
+
+    [inicialização da tradução, stream da IA]
+
+Os resultados são desestruturados:
+
+    const [, aiResponseChunks] = ...
+
+O primeiro resultado é apenas true.
+
+O segundo é o stream que será consumido.
+
+
+34. INICIALIZAÇÃO IDEMPOTENTE
+-----------------------------
+
+TranslationService.initialize() começa verificando:
+
+    this.translator && this.languageDetector
+
+Se ambos já existem, retorna sem recriar.
+
+Isso torna o método idempotente para o caso comum:
+
+    chamar novamente não repete o trabalho já concluído.
+
+Benefícios:
+
+- evita downloads repetidos;
+- evita instâncias desnecessárias;
+- reduz latência nas perguntas seguintes.
+
+
+35. DOWNLOAD EM PARALELO
+------------------------
+
+TranslationService cria:
+
+    translatorPromise
+    detectorPromise
+
+antes do await.
+
+Depois usa Promise.all.
+
+O tradutor e o detector podem ser preparados paralelamente.
+
+Se uma instância já existe:
+
+    Promise.resolve(instancia)
+
+é usada.
+
+Assim, uma tentativa parcial pode reutilizar o recurso pronto.
+
+
+36. PROGRESSO DOS DOWNLOADS
+---------------------------
+
+Cada create() recebe monitor().
+
+Monitor registra:
+
+    downloadprogress
+
+Recursos acompanhados:
+
+- modelo de linguagem;
+- tradutor inglês-português;
+- detector de idioma.
+
+As mensagens são encaminhadas por callback:
+
+    onProgress(mensagem)
+
+O service não acessa diretamente o DOM.
+
+O controller converte o callback em:
+
+    view.setOutput(mensagem)
+
+
+37. CÁLCULO COMPATÍVEL DE PORCENTAGEM
+-------------------------------------
+
+Versões diferentes podem oferecer:
+
+- loaded como fração de zero a um;
+- loaded e total.
+
+O código trata os dois formatos:
+
+se total existe:
+
+    loaded / total * 100
+
+senão:
+
+    loaded * 100
+
+Depois:
+
+    toFixed(0)
+
+gera uma porcentagem inteira para a interface.
+
+
+38. LANGUAGE DETECTOR
+---------------------
+
+Depois da geração:
+
+    languageDetector.detect(text)
+
+retorna uma lista ranqueada.
+
+O primeiro item representa o idioma mais provável.
+
+O código lê:
+
+    detectionResults[0]?.detectedLanguage
+
+Optional chaining evita falha se:
+
+- lista estiver vazia;
+- primeiro item não existir.
+
+
+39. POR QUE DETECTAR ANTES DE TRADUZIR?
+--------------------------------------
+
+Se a resposta já estiver em português, traduzir novamente seria:
+
+- desnecessário;
+- mais lento;
+- sujeito a alteração;
+- desperdício de recursos.
+
+O fluxo é:
+
+idioma detectado = pt
+    |
+    v
+retorna texto original
+
+idioma diferente
+    |
+    v
+traduz para português
+
+
+40. TRANSLATOR
+--------------
+
+Translator é criado com:
+
+sourceLanguage:
+    en;
+
+targetLanguage:
+    pt.
+
+Esses códigos seguem BCP 47.
+
+O tradutor é específico para o par.
+
+Se quisermos espanhol para português, precisaríamos criar outra configuração:
+
+    sourceLanguage: 'es'
+    targetLanguage: 'pt'
+
+
+41. TRADUÇÃO EM STREAMING
+-------------------------
+
+O projeto usa:
+
+    translateStreaming(text)
+
+O stream é percorrido com:
+
+    for await
+
+Na implementação da aula, cada chunk representa a tradução acumulada.
+
+Por isso:
+
+    translated = chunk
+
+substitui o valor anterior.
+
+Se uma versão entregar somente deltas, o contrato precisará ser revisto.
+
+
+42. FALLBACK DA TRADUÇÃO
+------------------------
+
+Se translator não existir:
+
+- registra warning;
+- retorna o texto original.
+
+Se detect ou translate falhar:
+
+- registra o erro;
+- retorna o texto original.
+
+Isso é graceful degradation.
+
+A geração principal continua útil mesmo que a tradução falhe.
+
+
+43. SESSÃO DO LANGUAGEMODEL
+---------------------------
+
+createSession():
+
+1. aborta operação anterior;
+2. cria AbortController;
+3. destrói sessão anterior;
+4. monta sessionOptions;
+5. cria LanguageModel;
+6. monta conteúdo;
+7. adiciona arquivo;
+8. inicia promptStreaming;
+9. devolve o stream.
+
+A sessão anterior não é reutilizada.
+
+Cada pergunta começa um contexto novo.
+
+
+44. SYSTEM PROMPT MULTIMODAL
+----------------------------
+
+O initialPrompts possui role system.
+
+Seu conteúdo é uma lista com item:
+
+    type: text
+    value: instrução
+
+Ele pede:
+
+- resposta clara;
+- resposta objetiva;
+- texto simples;
+- ausência de Markdown.
+
+No formato multimodal, content pode representar uma coleção de partes.
+
+
+45. CONTEÚDO DO USUÁRIO
+-----------------------
+
+contentArray começa com:
+
+    { type: "text", value: question }
+
+Se há arquivo:
+
+    { type: "image", value: blob }
+
+ou:
+
+    { type: "audio", value: blob }
+
+Exemplo:
+
+content:
+    parte 1 -> pergunta em texto;
+    parte 2 -> imagem.
+
+O modelo recebe as partes na mesma mensagem de papel user.
+
+
+46. PERGUNTA E ARQUIVO TRABALHAM JUNTOS
+---------------------------------------
+
+O arquivo não define sozinho a tarefa.
+
+A pergunta orienta o que fazer.
+
+Exemplos:
+
+Imagem:
+
+    "Descreva os objetos principais."
+
+    "Existe algum risco visível?"
+
+    "Leia o texto presente."
+
+Áudio:
+
+    "Resuma o assunto."
+
+    "Qual é o tom da fala?"
+
+    "Liste os pontos mencionados."
+
+Quanto mais específica a pergunta, mais útil tende a ser a resposta.
+
+
+47. PROMPTSTREAMING
+-------------------
+
+promptStreaming permite receber texto progressivamente.
+
+O controller percorre:
+
+    for await (const chunk of aiResponseChunks)
+
+Para cada trecho:
+
+- verifica cancelamento;
+- registra no console;
+- acumula em fullResponse;
+- atualiza a tela.
+
+
+48. RESPOSTA PARCIAL E RESPOSTA FINAL
+-------------------------------------
+
+Durante a geração, a tela mostra o inglês recebido.
+
+Ao concluir:
+
+    Traduzindo resposta...
+
+Depois substitui pelo português.
+
+Isso fornece feedback imediato.
+
+Uma alternativa futura seria:
+
+- mostrar duas áreas;
+- manter original em inglês;
+- mostrar tradução abaixo;
+- permitir alternar idiomas.
+
+
+49. DELTA VERSUS CONTEÚDO ACUMULADO
+-----------------------------------
+
+Streams podem seguir dois contratos.
+
+DELTA
+
+    "The"
+    " image"
+    " shows"
+
+Uso:
+
+    fullResponse += chunk
+
+ACUMULADO
+
+    "The"
+    "The image"
+    "The image shows"
+
+Uso:
+
+    fullResponse = chunk
+
+O LanguageModel da versão usada deve ser confirmado.
+
+O projeto usa concatenação para a geração e substituição para a tradução.
+
+
+50. ABORTCONTROLLER
+-------------------
+
+AIService cria:
+
+    new AbortController()
+
+O signal é entregue a promptStreaming.
+
+Ao clicar Parar:
+
+    aiService.abort()
+
+chama:
+
+    abortController.abort()
+
+O controller deixa de consumir novos chunks.
+
+
+51. ESTADO DO BOTÃO
+-------------------
+
+FormController mantém:
+
+    isGenerating
+
+Quando true:
+
+- texto do botão vira Parar;
+- classe stop-button é adicionada.
+
+Quando false:
+
+- texto vira Enviar;
+- classe é removida.
+
+O mesmo submit decide:
+
+se está gerando:
+    parar;
+
+se não está:
+    enviar.
+
+
+52. TRATAMENTO DE ERROS NO CONTROLLER
+-------------------------------------
+
+handleSubmit() usa try e catch.
+
+Em erro:
+
+- registra a exceção completa;
+- aborta a geração;
+- mostra uma mensagem.
+
+Depois:
+
+- devolve o botão ao estado Enviar.
+
+A mensagem de TranslationService inclui error.message original para facilitar
+diagnóstico.
+
+
+53. PARÂMETROS DE AMOSTRAGEM
+----------------------------
+
+A interface explica:
+
+temperature:
+    criatividade e variedade;
+
+topK:
+    quantidade de candidatos prováveis.
+
+Entretanto, a Prompt API web atual pode não expor números crus.
+
+O código não presume mais:
+
+    LanguageModel.params()
+
+
+54. FEATURE DETECTION PARA PARAMS
+---------------------------------
+
+getParams() verifica:
+
+    typeof LanguageModel.params === 'function'
+
+Se existir:
+
+- consulta parâmetros;
+- ativa supportsSamplingParameters;
+- usa limites reais.
+
+Se não existir:
+
+- retorna fallback;
+- mantém a aula visível;
+- não envia temperature e topK;
+- desativa os campos.
+
+
+55. FALLBACK DE PARÂMETROS
+--------------------------
+
+Valores de fallback:
+
+    defaultTemperature: 1
+    defaultTopK: 3
+    maxTemperature: 2
+    maxTopK: 128
+
+Eles inicializam a interface.
+
+Não significam que a API atual aceita esses números.
+
+sessionOptions recebe temperature e topK somente quando:
+
+    supportsSamplingParameters === true
+
+
+56. CAMPOS DESATIVADOS COM EXPLICAÇÃO
+-------------------------------------
+
+View.setSamplingParametersAvailability() desativa os campos quando necessário.
+
+Os controles continuam visíveis para preservar:
+
+- comparação com a aula;
+- explicação de amostragem;
+- compatibilidade com versões legadas.
+
+O atributo title informa:
+
+    Parâmetro legado indisponível nesta versão do Chrome.
+
+
+57. POR QUE A API MUDOU?
+-----------------------
+
+APIs experimentais evoluem.
+
+Parâmetros numéricos nem sempre têm significado uniforme em modelos diferentes.
+
+Uma plataforma pode preferir:
+
+- valores padrão;
+- modos descritivos;
+- configurações limitadas;
+- parâmetros liberados por experimento.
+
+Lição:
+
+O código deve tratar a capacidade real, não apenas reproduzir uma versão antiga
+da documentação.
+
+
+58. EXECUÇÃO PASSO A PASSO
+--------------------------
+
+PASSO 1
+
+Abrir o terminal.
+
+PASSO 2
+
+Entrar na pasta:
+
+    cd "/home/ricardo/Área de trabalho/unipds/machine_learning/aula_05"
+
+PASSO 3
+
+Instalar dependências:
+
+    npm install
+
+PASSO 4
+
+Iniciar:
+
+    npm start
+
+PASSO 5
+
+Abrir no Chrome o endereço exibido.
+
+Pode ser:
+
+    http://127.0.0.1:8080
+
+ou outra porta livre:
+
+    http://127.0.0.1:8082
+
+PASSO 6
+
+Selecionar uma imagem ou áudio, se desejar.
+
+PASSO 7
+
+Digitar uma pergunta.
+
+PASSO 8
+
+Clicar em Enviar.
+
+PASSO 9
+
+Aguardar downloads no primeiro uso.
+
+
+59. POR QUE USAR HTTP?
+----------------------
+
+index.js é carregado como module.
+
+Ele importa outros módulos.
+
+Abrir index.html por file pode produzir:
+
+- origin null;
+- bloqueio por CORS;
+- falha nos imports;
+- APIs indisponíveis em contexto inadequado.
+
+Use:
+
+    npm start
+
+e acesse por HTTP.
+
+
+60. HTTP-SERVER
+---------------
+
+package.json define:
+
+    "start": "npx http-server ."
+
+http-server:
+
+- entrega os arquivos;
+- resolve imports por URL;
+- cria origem local;
+- não executa o Gemini Nano;
+- não traduz;
+- não processa imagem.
+
+O processamento de IA ocorre no Chrome.
+
+
+61. PRIMEIRO USO
+----------------
+
+No primeiro clique, podem existir três preparações:
+
+1. modelo de linguagem;
+2. pacote de tradução inglês-português;
+3. detector de idioma.
+
+O tempo varia conforme:
+
+- conexão;
+- disco;
+- CPU;
+- GPU;
+- cache do Chrome;
+- perfil;
+- recursos já usados por outros sites.
+
+Não feche o navegador durante a preparação.
+
+
+62. CHECKLIST DE EXECUÇÃO
+-------------------------
+
+[ ] Estou no Chrome desktop recente.
+[ ] A página usa http, não file.
+[ ] Executei npm install.
+[ ] Executei npm start.
+[ ] Abri a porta exibida no terminal.
+[ ] LanguageModel existe.
+[ ] Translator existe.
+[ ] LanguageDetector existe.
+[ ] Existe espaço em disco.
+[ ] O hardware suporta as modalidades.
+[ ] Digitei uma pergunta.
+[ ] Cliquei em Enviar.
+[ ] Aguardei os downloads.
+[ ] Testei primeiro sem arquivo.
+[ ] Depois testei com imagem.
+[ ] Depois testei com áudio.
+
+
+63. TABELA DE ERROS E SOLUÇÕES
+------------------------------
+
+ERRO
+    Requires a user gesture.
+
+CAUSA
+    create() executado durante o load.
+
+SOLUÇÃO
+    iniciar recursos dentro de submit.
+
+----------------------------------------------------------------------
+
+ERRO
+    LanguageModel não existe.
+
+CAUSA
+    Chrome incompatível ou API desativada.
+
+SOLUÇÃO
+    atualizar, configurar e reiniciar.
+
+----------------------------------------------------------------------
+
+ERRO
+    Translator não existe.
+
+CAUSA
+    Translator API indisponível.
+
+SOLUÇÃO
+    verificar versão e flag.
+
+----------------------------------------------------------------------
+
+ERRO
+    LanguageDetector não existe.
+
+CAUSA
+    API de detecção indisponível.
+
+SOLUÇÃO
+    verificar versão e flag.
+
+----------------------------------------------------------------------
+
+ERRO
+    availability retorna unavailable.
+
+CAUSA
+    idioma, modalidade ou hardware sem suporte.
+
+SOLUÇÃO
+    revisar opções e requisitos.
+
+----------------------------------------------------------------------
+
+ERRO
+    porcentagem NaN.
+
+CAUSA
+    evento não forneceu total.
+
+SOLUÇÃO
+    usar loaded como fração quando total não existir.
+
+----------------------------------------------------------------------
+
+ERRO
+    LanguageModel.params is not a function.
+
+CAUSA
+    API web moderna sem parâmetros legados.
+
+SOLUÇÃO
+    feature detection e fallback.
+
+----------------------------------------------------------------------
+
+ERRO
+    arquivo não aparece no prompt.
+
+CAUSA
+    MIME type não começa por image ou audio.
+
+SOLUÇÃO
+    validar tipo e usar arquivo suportado.
+
+----------------------------------------------------------------------
+
+ERRO
+    resposta aparece repetida.
+
+CAUSA
+    stream acumulado tratado como delta.
+
+SOLUÇÃO
+    confirmar contrato e substituir conteúdo.
+
+----------------------------------------------------------------------
+
+ERRO
+    tradução falha.
+
+CAUSA
+    pacote, idioma, download ou API.
+
+SOLUÇÃO
+    registrar erro e mostrar original.
+
+
+64. DEVTOOLS
+------------
+
+Console ajuda a observar:
+
+- availability;
+- progresso;
+- idioma detectado;
+- chunks;
+- parâmetros;
+- arquivo adicionado;
+- exceções.
+
+Network ajuda a confirmar:
+
+- HTML;
+- módulos;
+- CSS;
+- status HTTP;
+- cache.
+
+Sources ajuda:
+
+- breakpoints;
+- pilha;
+- execução assíncrona;
+- valores.
+
+
+65. CACHE DO NAVEGADOR
+----------------------
+
+http-server pode enviar cache.
+
+Depois de modificar JavaScript, use:
+
+    Ctrl + Shift + R
+
+Isso força uma atualização.
+
+Outra possibilidade é abrir uma nova porta.
+
+
+66. PRIVACIDADE
+---------------
+
+As APIs integradas processam os dados no dispositivo.
+
+Isso é relevante para:
+
+- imagens pessoais;
+- gravações;
+- perguntas;
+- respostas.
+
+Ainda assim, a aplicação precisa:
+
+- não enviar arquivos para analytics;
+- não registrar conteúdo sensível;
+- explicar o tratamento;
+- proteger qualquer histórico;
+- evitar armazenamento desnecessário.
+
+Local não significa automaticamente seguro.
+
+
+67. SEGURANÇA DE ARQUIVOS
+-------------------------
+
+Em produção:
+
+- limite tamanho;
+- valide MIME;
+- rejeite tipos inesperados;
+- evite executar conteúdo;
+- proteja previews;
+- libere Object URLs;
+- aplique timeout;
+- permita cancelamento;
+- trate arquivos corrompidos.
+
+accept é conveniência de interface, não barreira de segurança.
+
+
+68. SEGURANÇA DA SAÍDA
+----------------------
+
+View usa:
+
+    textContent
+
+para resposta e progresso.
+
+Isso impede que texto gerado seja interpretado como HTML.
+
+Se o modelo gerar uma tag script, ela aparecerá como texto.
+
+showError usa innerHTML somente com mensagens controladas do próprio projeto.
+
+
+69. LIMITES DE ENTRADA
+----------------------
+
+Arquivos grandes podem:
+
+- consumir memória;
+- aumentar latência;
+- exceder limites;
+- falhar;
+- travar a experiência.
+
+Melhorias:
+
+- máximo de MB;
+- máximo de duração;
+- máximo de dimensões;
+- compressão de imagem;
+- aviso antes do envio;
+- recusa amigável.
+
+
+70. ENTRADA DE ÁUDIO E GPU
+--------------------------
+
+Áudio pode exigir suporte mais forte de hardware.
+
+Uma máquina que responde texto pode não aceitar áudio.
+
+Por isso:
+
+- capabilities incluem audio;
+- availability usa as mesmas opções;
+- unavailable deve ser explicado.
+
+Uma melhoria seria verificar capacidades dinamicamente e desativar apenas a
+modalidade ausente.
+
+
+71. TRATAMENTO POR MODALIDADE
+-----------------------------
+
+Hoje, getSessionCapabilities() sempre declara:
+
+- texto;
+- imagem;
+- áudio.
+
+Alternativa futura:
+
+Sem arquivo:
+    pedir somente texto;
+
+Com imagem:
+    pedir texto + imagem;
+
+Com áudio:
+    pedir texto + áudio.
+
+Benefícios:
+
+- compatibilidade maior;
+- menos requisitos;
+- diagnóstico preciso;
+- suporte parcial.
+
+
+72. CONCORRÊNCIA
+----------------
+
+Promise.all é usado para preparação independente.
+
+Isso não significa iniciar várias perguntas ao mesmo tempo.
+
+FormController mantém uma geração ativa.
+
+Se Enviar for acionado durante geração:
+
+- comportamento muda para Parar.
+
+Uma aplicação multiusuário precisaria:
+
+- sessões separadas;
+- filas;
+- limites;
+- isolamento de contexto.
+
+
+73. CICLO DE VIDA
+-----------------
+
+LanguageModel:
+
+- sessão anterior destruída a cada pergunta;
+- geração anterior abortada.
+
+Translator:
+
+- instância mantida;
+- reutilizada.
+
+LanguageDetector:
+
+- instância mantida;
+- reutilizada.
+
+Essa diferença existe porque:
+
+- conversa precisa de contexto isolado;
+- tradução e detecção são tarefas independentes.
+
+
+74. MEMÓRIA DE CONVERSA
+-----------------------
+
+O projeto não mantém histórico.
+
+Para criar chat com memória:
+
+- manter sessão;
+- guardar mensagens;
+- medir contextUsage;
+- tratar overflow;
+- oferecer Nova conversa;
+- destruir quando terminar.
+
+O arquivo anexado também pode consumir contexto.
+
+
+75. OBSERVABILIDADE
+-------------------
+
+Logs atuais:
+
+- parâmetros;
+- availability;
+- downloads;
+- arquivos;
+- chunks;
+- idiomas;
+- tradução;
+- erros.
+
+Métricas futuras:
+
+- tempo de download;
+- tempo até primeiro chunk;
+- duração da geração;
+- duração da tradução;
+- taxa de falha;
+- modalidade usada;
+- cancelamentos.
+
+Não registre conteúdo sensível.
+
+
+76. ACESSIBILIDADE
+------------------
+
+Pontos positivos:
+
+- labels;
+- formulário;
+- botão real;
+- controles nativos;
+- player de áudio;
+- texto visível;
+- idioma pt-BR.
+
+Melhorias:
+
+- aria-live na saída;
+- status de download anunciado;
+- foco após erro;
+- nome acessível para remover;
+- contraste validado;
+- indicador além da cor;
+- navegação completa por teclado.
+
+
+77. DESEMPENHO
+--------------
+
+Custos principais:
+
+- carregar modelos;
+- interpretar imagem;
+- processar áudio;
+- gerar tokens;
+- traduzir;
+- manter blobs.
+
+Boas práticas:
+
+- reutilizar especialistas;
+- destruir sessão;
+- abortar resposta inútil;
+- limitar arquivo;
+- mostrar streaming;
+- iniciar recursos juntos;
+- medir.
+
+
+78. TESTES MANUAIS
+------------------
+
+TESTE 1
+
+Pergunta vazia.
+
+Esperado:
+    nada começa.
+
+TESTE 2
+
+Primeira pergunta sem arquivo.
+
+Esperado:
+    downloads começam após clique.
+
+TESTE 3
+
+Segunda pergunta.
+
+Esperado:
+    especialistas são reutilizados.
+
+TESTE 4
+
+Imagem válida.
+
+Esperado:
+    preview e análise.
+
+TESTE 5
+
+Áudio válido.
+
+Esperado:
+    player e análise.
+
+TESTE 6
+
+Remover arquivo.
+
+Esperado:
+    prompt somente texto.
+
+TESTE 7
+
+Parar.
+
+Esperado:
+    geração abortada.
+
+TESTE 8
+
+Resposta em inglês.
+
+Esperado:
+    tradução final em português.
+
+TESTE 9
+
+Falha de tradução.
+
+Esperado:
+    texto original.
+
+TESTE 10
+
+params inexistente.
+
+Esperado:
+    campos desativados sem erro.
+
+
+79. TESTES AUTOMATIZADOS
+------------------------
+
+Mocks podem representar:
+
+- LanguageModel;
+- Translator;
+- LanguageDetector;
+- stream;
+- downloadprogress.
+
+Testes úteis:
+
+- os três create iniciam no submit;
+- initialize é idempotente;
+- Promise.all retorna stream;
+- unavailable bloqueia;
+- downloadable não bloqueia;
+- fallback de params;
+- arquivo correto vira Blob;
+- arquivo inválido não entra;
+- abort é propagado;
+- português não é traduzido;
+- falha retorna original.
+
+
+80. SMOKE TEST EXECUTADO
+------------------------
+
+Os serviços foram importados com implementações simuladas.
+
+Validamos:
+
+- Translator.create chamado;
+- LanguageDetector.create chamado;
+- LanguageModel.create chamado;
+- fallback de params;
+- inicialização conjunta;
+- ausência de erro de sintaxe.
+
+O teste real de download depende do Chrome e de interação humana.
+
+
+81. LIMITAÇÕES
+--------------
+
+1. depende de Chrome desktop;
+2. depende de hardware;
+3. depende de APIs em evolução;
+4. áudio pode exigir GPU;
+5. arquivo não tem limite de tamanho;
+6. Object URL não é revogada;
+7. não existe histórico;
+8. não existe retry automático;
+9. não existe fallback em nuvem;
+10. não existe teste de navegador automatizado;
+11. detector pode errar em textos curtos;
+12. tradução pode alterar nuance;
+13. modelo pode alucinar;
+14. controles legados podem ficar desativados;
+15. disponibilidade multimodal é tratada de forma conjunta.
+
+
+82. MELHORIAS FUTURAS
+---------------------
+
+PRIORIDADE 1
+
+- limites de arquivo;
+- validação de MIME;
+- Object URL revogada;
+- erros específicos;
+- botão tentar novamente.
+
+PRIORIDADE 2
+
+- capacidades por arquivo;
+- progresso separado;
+- original e tradução;
+- histórico opcional;
+- Nova conversa.
+
+PRIORIDADE 3
+
+- testes;
+- métricas;
+- acessibilidade;
+- timeout;
+- fila.
+
+PRIORIDADE 4
+
+- RAG;
+- OCR especializado;
+- transcrição;
+- fallback remoto;
+- idiomas selecionáveis.
+
+
+83. ALUCINAÇÃO E VALIDAÇÃO
+--------------------------
+
+Uma resposta sobre imagem ou áudio pode estar errada.
+
+O modelo pode:
+
+- inventar detalhes;
+- confundir objetos;
+- interpretar áudio incorretamente;
+- responder com confiança excessiva.
+
+Para aplicações críticas:
+
+- validar;
+- informar limitações;
+- evitar decisões automáticas;
+- manter humano no fluxo;
+- usar modelos especializados.
+
+
+84. RELAÇÃO COM AULA 3
+----------------------
+
+Aula 3:
+
+- visão computacional especializada;
+- YOLO;
+- bounding boxes;
+- coordenadas;
+- ação no jogo.
+
+Aula 5:
+
+- visão dentro de modelo multimodal;
+- resposta em linguagem natural;
+- não retorna bounding box;
+- interpretação aberta.
+
+YOLO é melhor para localização estruturada.
+
+Modelo multimodal é melhor para perguntas abertas.
+
+
+85. RELAÇÃO COM AULA 4
+----------------------
+
+Aula 4 ensinou:
+
+- LanguageModel;
+- sessão;
+- prompt;
+- streaming;
+- cancelamento;
+- download por gesto.
+
+Aula 5 adicionou:
+
+- imagem;
+- áudio;
+- Blob;
+- Translator;
+- LanguageDetector;
+- pipeline;
+- arquitetura modular;
+- downloads paralelos.
+
+
+86. MAPA MENTAL DO CÓDIGO
+-------------------------
+
+main()
+    |
+    +--> new AIService()
+    +--> new TranslationService()
+    +--> new View()
+    |
+    +--> checkRequirements()
+    |
+    +--> getParams()
+    |
+    +--> new FormController(...)
+    |
+    +--> setupEventListeners()
+            |
+            +--> parâmetros
+            +--> arquivo
+            +--> submit
+                    |
+                    +--> handleSubmit()
+                            |
+                            +--> initialize tradução
+                            |       |
+                            |       +--> Translator.create()
+                            |       +--> LanguageDetector.create()
+                            |
+                            +--> createSession()
+                            |       |
+                            |       +--> LanguageModel.create()
+                            |       +--> arquivo para Blob
+                            |       +--> promptStreaming()
+                            |
+                            +--> for await
+                            |
+                            +--> detect()
+                            |
+                            +--> translateStreaming()
+                            |
+                            +--> View
+
+
+87. RESPONSABILIDADE DE CADA ARQUIVO
+------------------------------------
+
+index.html
+
+- declarar elementos;
+- fornecer semântica;
+- carregar CSS e JavaScript.
+
+style.css
+
+- organizar layout;
+- estilizar arquivo;
+- mostrar preview;
+- diferenciar Enviar e Parar.
+
+index.js
+
+- instanciar dependências;
+- verificar;
+- configurar;
+- conectar controller.
+
+aiService.js
+
+- declarar modalidades;
+- consultar suporte;
+- administrar sessão;
+- gerar stream;
+- abortar.
+
+translationService.js
+
+- preparar especialistas;
+- acompanhar downloads;
+- detectar idioma;
+- traduzir;
+- aplicar fallback.
+
+formController.js
+
+- reagir a eventos;
+- coordenar pipeline;
+- controlar estado.
+
+view.js
+
+- manipular DOM;
+- obter entradas;
+- apresentar saída.
+
+
+88. PERGUNTAS PARA REVISÃO
+--------------------------
+
+1. O que é modalidade?
+2. Quais entradas são aceitas?
+3. Qual é a saída do LanguageModel?
+4. Por que traduzir depois?
+5. Qual é o papel do detector?
+6. O que é um modelo especialista?
+7. Por que separar services?
+8. Qual é o papel do controller?
+9. Por que View centraliza o DOM?
+10. O que é injeção de dependência?
+11. Por que availability e create usam as mesmas opções?
+12. Qual foi o NotAllowedError?
+13. Por que create não pode ficar no load?
+14. Como o submit resolve?
+15. Por que as Promises começam antes do await?
+16. Para que serve Promise.all?
+17. O que é MIME type?
+18. O que é ArrayBuffer?
+19. O que é Blob?
+20. Como uma imagem entra no prompt?
+21. Como um áudio entra no prompt?
+22. O que promptStreaming devolve?
+23. O que AbortController cancela?
+24. Por que Translator é reutilizado?
+25. Por que LanguageModel é recriado?
+26. O que acontece se tradução falhar?
+27. Por que params pode não existir?
+28. Por que os campos são desativados?
+29. Por que textContent é seguro?
+30. Qual melhoria aplicar às Object URLs?
+
+
+89. RESPOSTAS RÁPIDAS
+---------------------
+
+1. Tipo de informação processada.
+2. Texto, imagem e áudio.
+3. Texto em inglês.
+4. Para entregar a interface em português.
+5. Evitar tradução desnecessária e identificar idioma.
+6. Modelo otimizado para tarefa específica.
+7. Isolar integração externa.
+8. Coordenar view e serviços.
+9. Evitar DOM espalhado.
+10. Entregar dependências prontas a um objeto.
+11. Para validar o contrato real.
+12. Download iniciado sem gesto.
+13. Não existe intenção explícita da pessoa.
+14. Submit nasce de um clique ou tecla.
+15. Para preservar a ativação.
+16. Esperar tarefas independentes em conjunto.
+17. Identificador do tipo de mídia.
+18. Bytes brutos.
+19. Dados binários tipados.
+20. Como parte image contendo Blob.
+21. Como parte audio contendo Blob.
+22. Stream assíncrono.
+23. Geração ativa.
+24. Traduções são tarefas independentes.
+25. Isolar contextos entre perguntas.
+26. Mostra texto original.
+27. Parâmetro legado não exposto.
+28. Não fingir suporte.
+29. Não interpreta HTML.
+30. URL.revokeObjectURL().
+
+
+90. GLOSSÁRIO
+-------------
+
+AbortController
+    API para sinalizar cancelamento.
+
+ArrayBuffer
+    região de bytes em memória.
+
+Blob
+    objeto de dados binários.
+
+BCP 47
+    padrão de tags de idioma.
+
+Controller
+    camada que coordena entrada, serviços e view.
+
+downloadable
+    recurso suportado que precisa de download.
+
+downloading
+    recurso em download.
+
+Feature detection
+    teste de existência de capacidade.
+
+File
+    arquivo selecionado pelo usuário.
+
+Gemini Nano
+    modelo local administrado pelo Chrome.
+
+Gesto do usuário
+    clique, toque ou tecla com intenção.
+
+Graceful degradation
+    manter função útil quando parte falha.
+
+LanguageDetector
+    API de classificação de idioma.
+
+LanguageModel
+    API do modelo generativo.
+
+MIME type
+    descrição padronizada do tipo de mídia.
+
+Modalidade
+    categoria da entrada ou saída.
+
+Multimodal
+    sistema que combina modalidades.
+
+Object URL
+    URL temporária para objeto local.
+
+Promise
+    representação de resultado assíncrono.
+
+Promise.all
+    espera várias Promises.
+
+Prompt
+    instrução e contexto para o modelo.
+
+Service
+    camada de integração e regra especializada.
+
+Stream
+    entrega progressiva.
+
+Translator
+    API de tradução do Chrome.
+
+View
+    camada responsável pela interface.
+
+
+91. CHECKLIST DO QUE FOI CONCLUÍDO
+----------------------------------
+
+[x] Evoluir chat da Aula 4.
+[x] Separar arquitetura.
+[x] Criar AIService.
+[x] Criar TranslationService.
+[x] Criar FormController.
+[x] Criar View.
+[x] Aceitar texto.
+[x] Aceitar imagem.
+[x] Aceitar áudio.
+[x] Criar preview.
+[x] Permitir remoção.
+[x] Converter arquivo em Blob.
+[x] Declarar capacidades.
+[x] Verificar LanguageModel.
+[x] Verificar Translator.
+[x] Verificar LanguageDetector.
+[x] Gerar em streaming.
+[x] Detectar idioma.
+[x] Traduzir para português.
+[x] Manter fallback.
+[x] Permitir cancelamento.
+[x] Diagnosticar NotAllowedError.
+[x] Remover create do load.
+[x] Iniciar recursos no submit.
+[x] Preservar gesto do usuário.
+[x] Monitorar três downloads.
+[x] Corrigir porcentagem.
+[x] Tratar params legado.
+[x] Desativar controles incompatíveis.
+[x] Preservar comentários.
+[x] Adicionar comentários das correções.
+[x] Validar sintaxe.
+[x] Executar smoke test dos serviços.
+[x] Servir projeto por HTTP.
+
+
+92. FONTES PARA CONSULTA
+------------------------
+
+Introdução às APIs integradas:
+
+    https://developer.chrome.com/docs/ai/get-started
+
+Prompt API:
+
+    https://developer.chrome.com/docs/ai/prompt-api
+
+Translator API:
+
+    https://developer.chrome.com/docs/ai/translator-api
+
+Language Detector API:
+
+    https://developer.chrome.com/docs/ai/language-detection
+
+Diagnóstico:
+
+    chrome://on-device-internals
+
+Ao revisar no futuro, consulte a versão atual.
+
+
+93. RESUMO FINAL
+----------------
+
+Na Aula 5, transformamos o chat textual da Aula 4 em uma aplicação multimodal.
+
+A pessoa pode:
+
+- escrever uma pergunta;
+- anexar imagem;
+- anexar áudio;
+- visualizar;
+- remover;
+- enviar;
+- acompanhar;
+- cancelar.
+
+AIService:
+
+- verifica capacidades;
+- cria Gemini Nano;
+- processa texto, imagem e áudio;
+- devolve stream.
+
+TranslationService:
+
+- cria tradutor;
+- cria detector;
+- detecta resposta;
+- traduz inglês para português;
+- preserva original em caso de falha.
+
+FormController:
+
+- inicia todos os recursos no clique;
+- coordena a geração;
+- acumula chunks;
+- chama tradução;
+- controla o botão.
+
+View:
+
+- lê campos;
+- cria previews;
+- mostra progresso;
+- apresenta resposta.
+
+O principal erro foi:
+
+    create() no carregamento
+            |
+            v
+    modelo ainda não baixado
+            |
+            v
+    ausência de gesto
+            |
+            v
+    NotAllowedError
+
+A correção foi:
+
+    load apenas verifica
+            |
+            v
+    clique em Enviar
+            |
+            v
+    três create() iniciados
+            |
+            v
+    Promise.all
+            |
+            v
+    modelos prontos
+
+Também adaptamos parâmetros legados à API moderna e mantivemos o material
+didático visível.
+
+A grande lição é que uma aplicação de IA multimodal é um pipeline.
+
+Não basta chamar um modelo.
+
+É necessário coordenar:
+
+- modalidades;
+- arquivos;
+- modelos;
+- downloads;
+- permissões;
+- sessões;
+- streams;
+- tradução;
+- erros;
+- interface.
+
+
+94. FRASE CENTRAL PARA LEMBRAR
+------------------------------
+
+"Uma aplicação multimodal transforma texto e arquivos em partes de um mesmo
+prompt, coordena modelos especializados e entrega o resultado no idioma da
+pessoa, respeitando permissões, recursos e limites do navegador."
+
+
+FIM DA REFERÊNCIA DA AULA 5
+===========================
