@@ -1,0 +1,3 @@
+# Dados e plugins gerados pelo contêiner do Neo4j não pertencem ao código-fonte.
+neo4j/
+import/

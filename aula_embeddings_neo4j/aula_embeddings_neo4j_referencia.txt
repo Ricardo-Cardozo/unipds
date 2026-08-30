@@ -1,0 +1,2418 @@
+AULA EXTRA — EMBEDDINGS, BUSCA SEMÂNTICA, NEO4J E FUNDAMENTOS DE RAG
+=====================================================================
+
+Referência completa sobre como transformar textos em vetores, armazenar esses
+vetores no Neo4j e localizar trechos por semelhança de significado.
+
+Esta documentação foi construída a partir do código real da pasta
+`aula_embeddings_neo4j`, do PDF `tensores.pdf` e de documentação oficial do
+Neo4j, LangChain e Hugging Face.
+
+Data da análise e da pesquisa complementar: 30/08/2026
+
+
+OBJETIVOS DA AULA
+-----------------
+
+Ao terminar esta aula, devemos entender:
+
+- o que é uma busca semântica;
+- a diferença entre busca por palavra-chave e busca por significado;
+- o que é um embedding;
+- como um texto é representado por um vetor numérico;
+- por que textos semanticamente próximos produzem vetores próximos;
+- o que são dimensões de um embedding;
+- a relação entre tensores, vetores e embeddings;
+- como comparar vetores;
+- o que são similaridade de cosseno, distância euclidiana e produto escalar;
+- o que é um vector store;
+- o que é um índice vetorial;
+- o que significa procurar os vizinhos mais próximos;
+- a diferença entre busca exata e busca aproximada;
+- o papel do Neo4j no projeto;
+- como um PDF é carregado e dividido em chunks;
+- por que chunks possuem sobreposição;
+- como o modelo local `Xenova/all-MiniLM-L6-v2` gera embeddings;
+- como LangChain conecta documentos, embeddings e Neo4j;
+- como funciona `similaritySearch`;
+- o significado de `topK`;
+- o fluxo completo de indexação;
+- o fluxo completo de consulta;
+- a diferença entre busca semântica, RAG e GraphRAG;
+- o que já existe no projeto e o que ainda não foi implementado;
+- como executar e investigar a aplicação;
+- quais limitações precisam ser corrigidas antes de produção;
+- como avaliar a qualidade da recuperação;
+- como melhorar precisão, custo, segurança e desempenho.
+
+
+RESPOSTA CURTA SOBRE A AULA
+---------------------------
+
+O projeto lê um PDF, divide seu texto em pequenos trechos e transforma cada
+trecho em uma lista de 384 números usando um modelo de embeddings executado
+localmente.
+
+Esses números representam características semânticas do texto. O Neo4j guarda o
+trecho e seu vetor. Quando fazemos uma pergunta, a pergunta passa pelo mesmo
+modelo e também vira um vetor. O banco procura os vetores mais próximos e
+devolve os trechos que provavelmente possuem significado relacionado.
+
+Fluxo resumido:
+
+    PDF
+     |
+     v
+    extração do texto
+     |
+     v
+    divisão em chunks
+     |
+     v
+    modelo de embeddings
+     |
+     v
+    vetores + textos no Neo4j
+
+Depois, na consulta:
+
+    pergunta
+       |
+       v
+    embedding da pergunta
+       |
+       v
+    comparação com os vetores armazenados
+       |
+       v
+    três chunks semanticamente mais próximos
+
+O projeto atual é uma busca semântica. Ele implementa a etapa de recuperação de
+um futuro RAG, mas ainda não envia os resultados para um LLM gerar uma resposta.
+
+
+1. O PROBLEMA DA BUSCA TRADICIONAL
+----------------------------------
+
+Uma busca lexical procura palavras, partes de palavras ou regras definidas.
+
+Documento:
+
+    É necessário colocar os valores numéricos na mesma escala.
+
+Consulta:
+
+    Como normalizar os dados?
+
+Uma busca estritamente literal pode não encontrar o documento porque a palavra
+"normalizar" não aparece nele.
+
+A busca lexical é boa para:
+
+- nomes exatos;
+- códigos de produto;
+- CPF, ID e número de pedido;
+- mensagens de erro;
+- termos jurídicos exatos;
+- filtros;
+- prefixos;
+- expressões regulares;
+- frases que precisam aparecer literalmente.
+
+Ela pode falhar quando existem:
+
+- sinônimos;
+- paráfrases;
+- abreviações;
+- variações de escrita;
+- perguntas e respostas com vocabulários diferentes;
+- conceitos relacionados sem palavras idênticas.
+
+
+2. O QUE É BUSCA SEMÂNTICA
+--------------------------
+
+Busca semântica procura conteúdo pelo significado aproximado, não apenas pela
+presença das mesmas palavras.
+
+Exemplo:
+
+    Consulta: Como deixar as idades entre zero e um?
+
+O sistema pode recuperar um trecho sobre normalização min-max, mesmo que a
+consulta não contenha a expressão "normalização min-max".
+
+Outro exemplo:
+
+    Consulta: Como representar categorias com números?
+
+Trechos sobre one-hot encoding podem ser considerados relevantes.
+
+Busca semântica não significa que a máquina compreende como uma pessoa. O que
+ocorre é:
+
+1. um modelo transforma textos em vetores;
+2. relações aprendidas durante o treinamento influenciam esses vetores;
+3. uma métrica matemática compara os vetores;
+4. o sistema considera proximidade vetorial como sinal de proximidade semântica.
+
+
+3. BUSCA LEXICAL E BUSCA SEMÂNTICA NÃO SÃO INIMIGAS
+----------------------------------------------------
+
+As duas estratégias resolvem problemas diferentes.
+
+Busca lexical:
+
+- excelente para correspondência exata;
+- normalmente previsível;
+- fácil de explicar;
+- importante para nomes raros e identificadores.
+
+Busca semântica:
+
+- encontra paráfrases;
+- tolera vocabulários diferentes;
+- funciona bem com perguntas em linguagem natural;
+- encontra conceitos relacionados.
+
+Em sistemas profissionais é comum usar busca híbrida:
+
+    resultado final = sinal lexical + sinal vetorial + filtros + reranking
+
+Exemplo:
+
+- full-text encontra documentos que mencionam "TensorFlow.js";
+- busca vetorial encontra trechos semanticamente relacionados à pergunta;
+- filtro limita a uma versão, cliente ou categoria;
+- reranker reorganiza os candidatos com um modelo mais preciso.
+
+
+4. O QUE É UM EMBEDDING
+-----------------------
+
+Embedding é uma representação numérica aprendida de um item.
+
+O item pode ser:
+
+- palavra;
+- frase;
+- parágrafo;
+- documento;
+- imagem;
+- áudio;
+- produto;
+- usuário;
+- nó de grafo;
+- trecho de código.
+
+Nesta aula, cada texto se transforma em um vetor denso de tamanho fixo.
+
+Exemplo didático muito reduzido:
+
+    "cachorro brincando" -> [0.81, -0.12, 0.44]
+    "cão se divertindo"  -> [0.78, -0.09, 0.48]
+    "banco de dados"     -> [-0.20, 0.74, -0.31]
+
+Os valores reais não possuem rótulos simples como "assunto" ou "sentimento".
+O significado fica distribuído por muitas dimensões.
+
+O modelo usado no projeto gera 384 valores por entrada, não apenas três.
+
+
+5. EMBEDDING NÃO É UM RESUMO EM TEXTO
+-------------------------------------
+
+Um embedding:
+
+- não é uma frase;
+- não é uma lista de palavras-chave;
+- não é um hash criptográfico;
+- não é um ID aleatório;
+- não é a resposta de um chatbot;
+- não é o próprio texto comprimido de forma reversível.
+
+Ele é uma representação adequada para comparação matemática.
+
+Não devemos esperar reconstruir perfeitamente o texto original somente a partir
+do embedding.
+
+
+6. A RELAÇÃO ENTRE TENSOR, VETOR E EMBEDDING
+--------------------------------------------
+
+O PDF da aula explica que algoritmos trabalham com números e que dados precisam
+ser convertidos para estruturas numéricas.
+
+Vetor:
+
+    uma sequência unidimensional de números
+
+Exemplo:
+
+    [0.25, -0.61, 0.08, 0.92]
+
+Tensor:
+
+    estrutura numérica que pode ter uma ou mais dimensões
+
+Exemplos:
+
+    escalar: 7
+    vetor: [1, 2, 3]
+    matriz: [[1, 2], [3, 4]]
+    tensor com mais dimensões: [[[...]]]
+
+Embedding:
+
+    vetor produzido por um modelo para representar características aprendidas
+    de um item
+
+Portanto:
+
+    todo embedding textual desta aula é um vetor numérico;
+    esse vetor também pode ser representado por um tensor;
+    nem todo vetor ou tensor é um embedding.
+
+
+7. DIMENSÕES DO EMBEDDING
+-------------------------
+
+Dimensão é a quantidade de posições do vetor.
+
+O modelo `all-MiniLM-L6-v2` produz vetores densos de 384 dimensões.
+
+Representação conceitual:
+
+    texto -> [x1, x2, x3, ..., x384]
+
+Todos os vetores comparados precisam ter a mesma dimensão.
+
+Não é possível comparar diretamente:
+
+    vetor de 384 dimensões
+
+com:
+
+    vetor de 768 dimensões
+
+Por isso, mudar o modelo de embedding normalmente exige:
+
+1. criar ou ajustar o índice;
+2. gerar novamente os embeddings dos documentos;
+3. substituir os vetores antigos;
+4. garantir que consultas usem o novo modelo.
+
+
+8. VETORES DENSOS E VETORES ESPARSOS
+------------------------------------
+
+Vetor denso costuma possuir muitos valores relevantes distribuídos pelas
+dimensões:
+
+    [0.13, -0.72, 0.04, 0.51, ...]
+
+Vetor esparso possui muitas posições iguais a zero e costuma representar termos
+ou características explícitas:
+
+    [0, 0, 3.2, 0, 0, 1.1, ...]
+
+Embeddings de Sentence Transformers são normalmente densos.
+
+Busca híbrida pode combinar:
+
+- vetores densos para significado;
+- sinais esparsos ou full-text para palavras importantes.
+
+
+9. COMO UM MODELO APRENDE PROXIMIDADE
+------------------------------------
+
+Durante o treinamento de um modelo de embeddings, exemplos relacionados são
+usados para aproximar representações compatíveis e separar representações menos
+compatíveis.
+
+De maneira simplificada:
+
+    textos relacionados -> vetores mais próximos
+    textos não relacionados -> vetores mais distantes
+
+O `all-MiniLM-L6-v2` foi ajustado com objetivo contrastivo e um grande conjunto
+de pares de frases. O cartão oficial do modelo informa que ele foi construído
+para tarefas como similaridade, clustering e busca semântica.
+
+Isso não cria uma regra perfeita. A qualidade depende de:
+
+- dados de treinamento;
+- idioma;
+- domínio;
+- tamanho do texto;
+- forma da consulta;
+- modelo escolhido;
+- estratégia de chunking;
+- métrica;
+- avaliação feita no caso real.
+
+
+10. O MODELO UTILIZADO NESTE PROJETO
+------------------------------------
+
+Configuração em `.env.example`:
+
+    EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2
+
+Criação em `src/index.ts`:
+
+    new HuggingFaceTransformersEmbeddings({
+        model: CONFIG.embedding.modelName,
+        pretrainedOptions: CONFIG.embedding.pretrainedOptions
+    })
+
+Características relevantes:
+
+- executa localmente por Transformers.js;
+- gera embeddings de 384 dimensões;
+- foi projetado para frases e parágrafos curtos;
+- o cartão oficial informa truncamento de entradas acima de 256 word pieces;
+- é relativamente pequeno e rápido;
+- evita uma chamada paga para gerar cada embedding;
+- precisa baixar os arquivos do modelo na primeira utilização;
+- depois do download, a inferência pode ocorrer localmente.
+
+A configuração atual usa:
+
+    dtype: "fp32"
+
+FP32 preserva boa precisão numérica, mas costuma usar mais memória e ser mais
+pesado do que FP16 ou versões quantizadas.
+
+A própria configuração comenta alternativas:
+
+    fp32, fp16, q8, q4 e q4f16
+
+Quantização pode reduzir memória e melhorar velocidade, mas precisa ser testada,
+pois pode alterar qualidade e compatibilidade no ambiente.
+
+
+11. ATENÇÃO AO IDIOMA PORTUGUÊS
+-------------------------------
+
+O cartão oficial de `all-MiniLM-L6-v2` o classifica como modelo em inglês. O PDF
+e as perguntas desta aula estão em português.
+
+Isso não significa que todo resultado será ruim, mas significa que a qualidade
+em português não deve ser presumida.
+
+Uma alternativa a testar é:
+
+    sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+O cartão oficial desse modelo informa suporte a 50 idiomas e também saída de
+384 dimensões.
+
+Importante:
+
+- não se troca modelo apenas por opinião;
+- cria-se um conjunto de perguntas e respostas esperadas;
+- executam-se os dois modelos;
+- comparam-se métricas de recuperação;
+- escolhe-se o que funciona melhor no conteúdo real.
+
+
+12. ESPAÇO VETORIAL: UMA ANALOGIA
+---------------------------------
+
+Imagine um mapa em que cada texto ocupa um ponto.
+
+Em duas dimensões seria possível desenhar:
+
+    normalização  o o  escala de dados
+
+
+                         o banco de dados
+
+
+    o one-hot encoding  o categorias numéricas
+
+Na prática, o mapa possui centenas de dimensões e não pode ser visualizado dessa
+forma. A ideia, porém, permanece:
+
+- pontos próximos indicam maior semelhança segundo o modelo;
+- pontos distantes indicam menor semelhança;
+- a pergunta também é colocada nesse mesmo espaço.
+
+
+13. COMO COMPARAMOS DOIS VETORES
+--------------------------------
+
+Precisamos de uma função que transforme dois vetores em um valor comparável.
+
+Métricas comuns:
+
+1. similaridade de cosseno;
+2. distância euclidiana;
+3. produto escalar ou dot product.
+
+A métrica correta depende do modelo e da forma como os vetores foram treinados
+e normalizados.
+
+
+14. SIMILARIDADE DE COSSENO
+---------------------------
+
+A similaridade de cosseno observa o ângulo entre dois vetores.
+
+Fórmula conceitual:
+
+                    A · B
+    cos(A, B) = ----------------
+                 ||A|| × ||B||
+
+Onde:
+
+- `A · B` é o produto escalar;
+- `||A||` é o comprimento do vetor A;
+- `||B||` é o comprimento do vetor B.
+
+Quanto mais alinhados estiverem os vetores, maior será a similaridade.
+
+Ela é muito usada em embeddings de texto porque a direção costuma importar
+mais do que a magnitude absoluta.
+
+O Neo4j oferece índice e função de similaridade por cosseno.
+
+
+15. DISTÂNCIA EUCLIDIANA
+------------------------
+
+Distância euclidiana mede a distância geométrica entre dois pontos.
+
+Em duas dimensões, corresponde à distância de uma linha reta no plano.
+
+Conceitualmente:
+
+    distância(A, B) = sqrt(sum((Ai - Bi)²))
+
+Menor distância significa maior proximidade.
+
+Neo4j também oferece busca baseada em distância euclidiana.
+
+Para vetores normalizados com norma L2 igual a um, cosseno e euclidiana podem
+produzir a mesma ordenação, embora os valores apresentados sejam diferentes.
+
+
+16. PRODUTO ESCALAR
+-------------------
+
+Produto escalar multiplica posições correspondentes e soma os resultados:
+
+    A · B = A1B1 + A2B2 + ... + AnBn
+
+Ele é eficiente e muito utilizado quando o modelo foi preparado para essa
+métrica ou quando os vetores estão normalizados.
+
+Não devemos trocar métricas sem validar. Um ranking pode mudar.
+
+
+17. O QUE É TOP-K
+-----------------
+
+`K` é a quantidade máxima de resultados recuperados.
+
+No projeto:
+
+    similarity: {
+        topK: 3
+    }
+
+Consulta:
+
+    similaritySearch(question, 3)
+
+Isso significa:
+
+    devolva os três chunks considerados mais próximos da pergunta
+
+TopK não é uma nota mínima de qualidade.
+
+Mesmo quando nenhum documento é realmente bom, o sistema ainda pode devolver os
+três melhores entre os disponíveis.
+
+Em produção, podemos combinar:
+
+- topK;
+- score mínimo;
+- filtros;
+- reranking;
+- resposta "não encontrei informação suficiente".
+
+
+18. O QUE É UM VECTOR STORE
+---------------------------
+
+Vector store é uma camada capaz de:
+
+- armazenar vetores;
+- associar vetor ao conteúdo original;
+- associar metadados;
+- criar índices;
+- receber um vetor de consulta;
+- localizar vetores próximos;
+- devolver documentos correspondentes.
+
+Exemplo conceitual de um registro:
+
+    texto: "Normalização coloca valores na mesma escala"
+    embedding: [0.02, -0.18, ..., 0.31]
+    metadata:
+        source: "tensores.pdf"
+        page: 3
+
+Nesta aula, o Neo4j desempenha esse papel por meio de sua capacidade de índice
+vetorial e da integração `Neo4jVectorStore` do LangChain.
+
+
+19. BANCO VETORIAL E ÍNDICE VETORIAL
+------------------------------------
+
+Os termos são relacionados, mas não idênticos.
+
+Banco com suporte vetorial:
+
+- persiste dados e vetores;
+- oferece operações de consulta;
+- pode possuir recursos adicionais de banco.
+
+Índice vetorial:
+
+- é uma estrutura criada para acelerar a procura por vizinhos próximos;
+- organiza os vetores para evitar comparar cada consulta com todos os registros;
+- possui configuração de dimensão e métrica.
+
+Neo4j é originalmente um banco de grafos que também oferece índices vetoriais.
+
+
+20. BUSCA EXATA E BUSCA APROXIMADA
+----------------------------------
+
+Busca exata calcula a comparação contra todos os vetores.
+
+Vantagem:
+
+- encontra matematicamente os vizinhos mais próximos.
+
+Desvantagem:
+
+- custo cresce com a quantidade de vetores.
+
+Busca aproximada por vizinhos mais próximos, ANN:
+
+- usa uma estrutura de índice;
+- reduz o espaço explorado;
+- é muito mais eficiente em grandes bases;
+- pode trocar uma pequena quantidade de recall por velocidade.
+
+Índices vetoriais modernos frequentemente usam HNSW, Hierarchical Navigable
+Small World, para navegar por uma estrutura de vizinhança em camadas.
+
+A ideia não é "adivinhar aleatoriamente". É organizar a busca para chegar
+rapidamente a candidatos muito próximos sem examinar tudo.
+
+
+21. O QUE É NEO4J
+-----------------
+
+Neo4j é um banco de dados orientado a grafos.
+
+Seus elementos principais são:
+
+- nós;
+- relacionamentos;
+- propriedades;
+- labels;
+- tipos de relacionamento.
+
+Exemplo:
+
+    (:Pessoa {nome: "Ana"})
+        -[:COMPROU]->
+    (:Produto {nome: "Tênis"})
+
+Cypher é a linguagem usada para consultar e modificar o grafo.
+
+Exemplo:
+
+    MATCH (p:Pessoa)-[:COMPROU]->(produto:Produto)
+    RETURN p, produto
+
+
+22. COMO O NEO4J É USADO NESTA AULA
+-----------------------------------
+
+A configuração do projeto define:
+
+    indexName: "tensors_index"
+    searchType: "vector"
+    textNodeProperties: ["text"]
+    nodeLabel: "Chunk"
+
+O LangChain cria ou utiliza nós com label `Chunk`, armazena o texto e associa um
+embedding ao nó.
+
+Visão conceitual:
+
+    (:Chunk {
+        text: "trecho do PDF",
+        embedding: [384 números],
+        source: "tensores.pdf"
+    })
+
+O índice `tensors_index` permite procurar nós `Chunk` próximos do vetor da
+pergunta.
+
+
+23. O PROJETO AINDA NÃO EXPLORA TODO O PODER DE GRAFO
+-----------------------------------------------------
+
+No estado atual, Neo4j é usado principalmente como vector store.
+
+Os chunks são indexados, mas o código não cria relações semânticas como:
+
+    (:Chunk)-[:PARTE_DE]->(:Documento)
+    (:Chunk)-[:MENCIONA]->(:Conceito)
+    (:Conceito)-[:RELACIONADO_A]->(:Conceito)
+    (:Aula)-[:POSSUI]->(:Tópico)
+
+Também não combina a busca vetorial com travessia do grafo.
+
+Portanto:
+
+    usar Neo4j não transforma automaticamente o sistema em GraphRAG
+
+Para virar GraphRAG, seria necessário modelar entidades e relações e utilizar
+essas conexões durante a recuperação.
+
+
+24. ARQUITETURA REAL DO PROJETO
+-------------------------------
+
+    tensores.pdf
+         |
+         v
+    PDFLoader
+         |
+         v
+    páginas como Documents
+         |
+         v
+    RecursiveCharacterTextSplitter
+    chunkSize = 1000
+    chunkOverlap = 200
+         |
+         v
+    chunks de texto
+         |
+         v
+    HuggingFaceTransformersEmbeddings
+    Xenova/all-MiniLM-L6-v2
+         |
+         v
+    vetores de 384 dimensões
+         |
+         v
+    Neo4jVectorStore
+         |
+         v
+    nós :Chunk + índice tensors_index
+
+Consulta:
+
+    pergunta em português
+         |
+         v
+    mesmo modelo de embedding
+         |
+         v
+    vetor de consulta com 384 dimensões
+         |
+         v
+    índice vetorial do Neo4j
+         |
+         v
+    top 3 chunks
+         |
+         v
+    displayResults no terminal
+
+
+25. AS DUAS FASES QUE NÃO DEVEM SER CONFUNDIDAS
+------------------------------------------------
+
+FASE A — INDEXAÇÃO OU INGESTÃO
+
+Executada quando os documentos são preparados:
+
+1. carregar fonte;
+2. extrair texto;
+3. limpar texto;
+4. dividir em chunks;
+5. gerar embedding de cada chunk;
+6. armazenar texto, vetor e metadata;
+7. atualizar índice.
+
+FASE B — CONSULTA OU RETRIEVAL
+
+Executada para cada pergunta:
+
+1. receber pergunta;
+2. gerar embedding da pergunta com modelo compatível;
+3. consultar índice;
+4. receber candidatos e scores;
+5. aplicar filtros, threshold ou reranking;
+6. devolver os melhores trechos.
+
+Gerar embeddings de toda a base a cada pergunta seria desperdício. Em produção,
+a indexação ocorre quando documentos entram ou mudam; a consulta gera apenas o
+embedding da pergunta.
+
+
+26. CARREGAMENTO DO PDF
+-----------------------
+
+Arquivo:
+
+    src/documentProcessor.ts
+
+Classe usada:
+
+    PDFLoader
+
+Código conceitual:
+
+    const loader = new PDFLoader(this.pdfPath)
+    const rawDocuments = await loader.load()
+
+O PDF `tensores.pdf` possui sete páginas. O loader extrai texto e cria objetos
+`Document`.
+
+Um `Document` do LangChain normalmente contém:
+
+- `pageContent`: texto;
+- `metadata`: informações da origem.
+
+Problemas possíveis na extração de PDF:
+
+- colunas fora de ordem;
+- cabeçalho repetido;
+- rodapé misturado;
+- tabela quebrada;
+- PDF apenas com imagem;
+- caracteres incorretos;
+- texto sem separação adequada;
+- página sem OCR.
+
+Por isso, sempre devemos inspecionar uma amostra do texto extraído.
+
+
+27. POR QUE DIVIDIR O DOCUMENTO EM CHUNKS
+-----------------------------------------
+
+Gerar um único embedding para o PDF inteiro seria ruim porque:
+
+- o assunto específico pode ser diluído;
+- o modelo possui limite de entrada;
+- a busca devolveria o documento inteiro;
+- o contexto enviado a um futuro LLM seria grande;
+- seria difícil citar o trecho relevante.
+
+Chunks menores permitem recuperar unidades mais específicas.
+
+Mas chunks pequenos demais também são ruins:
+
+- perdem contexto;
+- separam pergunta e resposta;
+- geram muitos registros;
+- aumentam custo de indexação;
+- podem produzir resultados fragmentados.
+
+Chunking é uma decisão de qualidade, não apenas um detalhe técnico.
+
+
+28. CONFIGURAÇÃO DE CHUNKING DA AULA
+------------------------------------
+
+Em `src/config.ts`:
+
+    textSplitter: {
+        chunkSize: 1000,
+        chunkOverlap: 200
+    }
+
+O `RecursiveCharacterTextSplitter` tenta dividir respeitando separadores
+naturais e reduz a granularidade até obter trechos adequados.
+
+Para texto genérico, ele normalmente procura preservar primeiro unidades como:
+
+- parágrafos;
+- linhas;
+- frases ou espaços;
+- caracteres, quando necessário.
+
+Nesta configuração, o tamanho é medido segundo a função de comprimento do
+splitter, normalmente caracteres, não necessariamente tokens do modelo.
+
+
+29. POR QUE EXISTE CHUNK OVERLAP
+--------------------------------
+
+`chunkOverlap: 200` repete parte do final de um chunk no início do próximo.
+
+Sem overlap:
+
+    chunk 1: definição de normalização...
+    chunk 2: ...fórmula e exemplo
+
+A fronteira pode separar informações que deveriam permanecer juntas.
+
+Com overlap:
+
+    chunk 1: definição + início da fórmula
+    chunk 2: início da fórmula + exemplo
+
+Benefícios:
+
+- preserva contexto nas bordas;
+- reduz perda de frases;
+- aumenta chance de recuperar explicação completa.
+
+Custos:
+
+- duplica conteúdo;
+- aumenta quantidade de vetores;
+- pode devolver chunks quase iguais;
+- aumenta armazenamento e tempo de embedding.
+
+
+30. METADATA
+------------
+
+Metadata permite guardar:
+
+- arquivo de origem;
+- página;
+- seção;
+- autor;
+- data;
+- tenant;
+- permissões;
+- versão;
+- categoria;
+- checksum.
+
+Ela é importante para:
+
+- filtros;
+- citações;
+- auditoria;
+- atualização;
+- exclusão;
+- controle de acesso;
+- rastreamento da fonte.
+
+O código atual reduz a metadata para:
+
+    metadata: {
+        source: doc.metadata.source
+    }
+
+Isso descarta outras informações que o loader ou splitter possa fornecer, como
+número da página e localização do trecho.
+
+Existe uma consequência concreta:
+
+    `displayResults` tenta mostrar `doc.metadata.pageNumber`,
+    mas `DocumentProcessor` remove esse campo.
+
+Logo, o número da página provavelmente não aparecerá. Para uma versão mais
+profissional, a metadata de página deve ser preservada e validada.
+
+
+31. GERAÇÃO DOS EMBEDDINGS
+--------------------------
+
+A abstração do LangChain oferece operações conceituais diferentes:
+
+    embedDocuments([...textos])
+    embedQuery("pergunta")
+
+Na indexação, cada chunk passa por embedding de documento.
+
+Na busca, a pergunta passa por embedding de consulta.
+
+O `Neo4jVectorStore` chama essas operações internamente quando:
+
+- adicionamos documentos;
+- executamos `similaritySearch`.
+
+É essencial usar embeddings compatíveis nos dois lados.
+
+
+32. CRIAÇÃO DO VECTOR STORE
+---------------------------
+
+Trecho central:
+
+    _neo4jVectorStore = await Neo4jVectorStore.fromExistingGraph(
+        embeddings,
+        CONFIG.neo4j
+    )
+
+Essa operação conecta:
+
+- o modelo de embeddings;
+- as credenciais do Neo4j;
+- o nome do índice;
+- a label dos nós;
+- a propriedade de texto;
+- o tipo de pesquisa.
+
+O nome `fromExistingGraph` não quer dizer que os embeddings já existem. A
+integração trabalha com o grafo configurado e pode preparar a estrutura
+necessária conforme a versão da biblioteca e do banco.
+
+
+33. LIMPEZA EXECUTADA ANTES DA INDEXAÇÃO
+----------------------------------------
+
+O projeto executa:
+
+    MATCH (n:`Chunk`) DETACH DELETE n
+
+Isso remove todos os nós com label `Chunk` antes de inserir o PDF novamente.
+
+Vantagem didática:
+
+- evita duplicar dados ao repetir a demonstração.
+
+Problemas em produção:
+
+- destrói todos os chunks;
+- pode remover documentos de outras fontes;
+- provoca reprocessamento completo;
+- aumenta tempo e custo;
+- cria uma janela sem dados;
+- não diferencia versões nem tenants.
+
+Uma estratégia profissional usa IDs determinísticos, checksum e upsert:
+
+1. calcular hash da fonte ou do chunk;
+2. inserir somente novos;
+3. atualizar modificados;
+4. remover apenas os que deixaram de existir;
+5. preservar outras fontes.
+
+
+34. ADIÇÃO DOS DOCUMENTOS
+-------------------------
+
+O código percorre os chunks:
+
+    for (const [index, doc] of documents.entries()) {
+        await _neo4jVectorStore.addDocuments([doc])
+    }
+
+Para cada chunk:
+
+1. o texto é enviado ao modelo local;
+2. um embedding é gerado;
+3. o documento é gravado no Neo4j;
+4. o índice passa a considerar o novo vetor.
+
+O loop de uma unidade facilita acompanhar a aula, mas pode ser lento.
+
+Em produção, devemos avaliar:
+
+- batches;
+- concorrência controlada;
+- limite de memória;
+- retries;
+- checkpoint;
+- logs por lote;
+- retomada após falha;
+- cache de embeddings.
+
+
+35. PERGUNTAS EXECUTADAS NA AULA
+--------------------------------
+
+O array atual contém perguntas sobre:
+
+- tensores em JavaScript;
+- conversão de objetos em tensores;
+- normalização;
+- redes neurais no TensorFlow.js;
+- treinamento de rede neural;
+- one-hot encoding.
+
+Para cada pergunta:
+
+    const results = await vectorStore.similaritySearch(question, topK)
+
+A biblioteca:
+
+1. cria o embedding da pergunta;
+2. consulta o índice vetorial;
+3. recebe os vizinhos mais próximos;
+4. converte nós em objetos `Document`;
+5. devolve os três melhores resultados.
+
+O erro de digitação em "hot enconding" é um bom experimento: uma busca semântica
+pode continuar recuperando conteúdo sobre one-hot encoding, embora isso dependa
+da robustez do modelo.
+
+
+36. EXIBIÇÃO DOS RESULTADOS
+---------------------------
+
+Arquivo:
+
+    src/util.ts
+
+`displayResults` apresenta a quantidade de trechos e chama `formatContent`.
+
+`formatContent`:
+
+- troca sequências de espaços por um único espaço;
+- remove espaços das extremidades;
+- limita a visualização a 200 caracteres;
+- adiciona reticências.
+
+Esse limite afeta apenas o que aparece no terminal. O conteúdo armazenado não é
+reduzido para 200 caracteres por essa função.
+
+
+37. POR QUE O SCORE DE SIMILARIDADE IMPORTA
+-------------------------------------------
+
+O método atual devolve documentos, mas não imprime scores.
+
+Sem scores, vemos a ordem, porém não sabemos:
+
+- se o primeiro resultado é muito forte;
+- se primeiro e segundo são quase iguais;
+- se todos os resultados são ruins;
+- qual threshold poderia ser utilizado.
+
+Uma versão de estudo pode usar uma operação equivalente a busca com score,
+quando suportada pela integração, e registrar:
+
+    posição | score | fonte | página | trecho
+
+Não existe um threshold universal. O valor precisa ser calibrado com o modelo,
+a métrica, o banco e o conjunto real de perguntas.
+
+
+38. POR QUE BUSCA SEMÂNTICA PODE ERRAR
+-------------------------------------
+
+Ela pode recuperar um trecho incorreto quando:
+
+- o chunk mistura muitos assuntos;
+- a pergunta é ambígua;
+- o modelo não representa bem o idioma;
+- o domínio é muito especializado;
+- existe pouca informação;
+- a resposta está dividida entre chunks;
+- o PDF foi extraído incorretamente;
+- o índice possui dados desatualizados;
+- a consulta precisa de palavra exata;
+- os melhores vizinhos ainda são irrelevantes;
+- o modelo confunde conceitos semanticamente próximos.
+
+Embedding mede semelhança aprendida. Ele não prova verdade.
+
+
+39. BUSCA SEMÂNTICA NÃO GERA RESPOSTA
+-------------------------------------
+
+O resultado da busca é um conjunto de trechos.
+
+Exemplo:
+
+    pergunta -> [chunk 8, chunk 3, chunk 15]
+
+Isso não é automaticamente uma resposta conversacional.
+
+Podemos:
+
+- mostrar os trechos diretamente;
+- usá-los em uma interface de pesquisa;
+- enviá-los para um LLM;
+- criar citações;
+- aplicar regras;
+- combinar com dados estruturados.
+
+
+40. O QUE É RAG
+---------------
+
+RAG significa Retrieval-Augmented Generation, ou geração aumentada por
+recuperação.
+
+Fluxo típico:
+
+    pergunta do usuário
+            |
+            v
+    recuperação de trechos relevantes
+            |
+            v
+    montagem de contexto e prompt
+            |
+            v
+    modelo de linguagem gera resposta
+            |
+            v
+    resposta com base nas fontes
+
+RAG possui pelo menos duas partes:
+
+1. retrieval: localizar contexto;
+2. generation: gerar resposta usando o contexto.
+
+
+41. ESTE PROJETO É UM RAG COMPLETO?
+-----------------------------------
+
+Não.
+
+Ele já implementa:
+
+- carregamento do PDF;
+- chunking;
+- embeddings;
+- persistência vetorial;
+- consulta semântica;
+- recuperação topK.
+
+Ele ainda não implementa:
+
+- chamada a um LLM depois da busca;
+- prompt contendo os chunks;
+- política para dizer "não sei";
+- geração de resposta;
+- citação das fontes;
+- validação da resposta;
+- proteção contra prompt injection do documento.
+
+Descrição correta:
+
+    laboratório de embeddings e busca semântica;
+    base de recuperação para um futuro RAG.
+
+
+42. COMO EVOLUIR PARA RAG
+-------------------------
+
+Depois de recuperar os chunks:
+
+1. selecionar e possivelmente reranquear resultados;
+2. formatar contexto com fonte e página;
+3. criar instrução clara para o LLM;
+4. proibir invenção fora do contexto;
+5. pedir citação;
+6. gerar resposta;
+7. validar saída;
+8. registrar pergunta, chunks, scores e resposta;
+9. avaliar fidelidade e relevância.
+
+Prompt conceitual:
+
+    Responda somente com base no contexto abaixo.
+    Se o contexto não possuir a resposta, diga que não encontrou informação.
+    Cite a página utilizada.
+
+    <contexto>
+      [fonte=tensores.pdf pagina=3]
+      ...trecho recuperado...
+    </contexto>
+
+    <pergunta>
+      Como funciona a normalização min-max?
+    </pergunta>
+
+
+43. RAG NÃO ELIMINA ALUCINAÇÕES
+-------------------------------
+
+RAG fornece evidências, mas o LLM ainda pode:
+
+- ignorar contexto;
+- misturar trechos;
+- interpretar errado;
+- inventar detalhes;
+- citar fonte incorreta;
+- responder quando não deveria.
+
+Precisamos avaliar separadamente:
+
+- qualidade do retrieval;
+- qualidade da resposta;
+- fidelidade ao contexto;
+- qualidade das citações.
+
+Se a recuperação falha, o LLM recebe contexto ruim. Isso é frequentemente
+resumido como:
+
+    garbage in -> garbage out
+
+
+44. O QUE É GRAPHRAG
+--------------------
+
+GraphRAG combina recuperação com estrutura de grafo.
+
+Uma busca vetorial pode localizar um chunk sobre TensorFlow.js. A travessia do
+grafo pode acrescentar:
+
+- aula a que ele pertence;
+- conceitos mencionados;
+- pré-requisitos;
+- exemplos;
+- tópicos relacionados;
+- autor e versão;
+- dependências.
+
+Exemplo:
+
+    pergunta
+       |
+       v
+    busca vetorial encontra (:Chunk)
+       |
+       v
+    Cypher percorre relações
+       |
+       +--> (:Conceito {nome: "Tensor"})
+       +--> (:Aula {numero: 1})
+       +--> (:Exemplo {linguagem: "JavaScript"})
+       |
+       v
+    contexto mais conectado para o LLM
+
+GraphRAG é especialmente útil quando relações explícitas carregam informações
+que não aparecem bem em proximidade textual.
+
+
+45. QUANDO NEO4J FAZ MAIS SENTIDO
+---------------------------------
+
+Neo4j é interessante quando precisamos combinar:
+
+- busca vetorial;
+- relacionamentos;
+- caminhos;
+- hierarquias;
+- permissões conectadas;
+- contexto de entidades;
+- consultas Cypher;
+- GraphRAG.
+
+Exemplos:
+
+- fraude entre contas e dispositivos;
+- catálogo com marcas, categorias e compatibilidades;
+- documentação com módulos e dependências;
+- pessoas, empresas e contratos;
+- produtos, compras e preferências;
+- conhecimento científico conectado.
+
+Se o caso exige somente vetores e filtros simples, outros bancos vetoriais ou
+bancos relacionais com extensão vetorial também podem ser adequados. A escolha
+deve considerar operação, escala, equipe e consultas reais.
+
+
+46. ARQUIVOS DO PROJETO
+-----------------------
+
+`tensores.pdf`
+
+- fonte de conhecimento da demonstração;
+- possui sete páginas;
+- explica tensores, normalização, redes neurais e tópicos relacionados.
+
+`src/config.ts`
+
+- centraliza Neo4j, PDF, chunking, embeddings e topK;
+- contém configuração OpenRouter ainda não utilizada no fluxo atual.
+
+`src/documentProcessor.ts`
+
+- carrega PDF;
+- divide documentos;
+- ajusta metadata.
+
+`src/index.ts`
+
+- orquestra a execução;
+- cria embeddings;
+- conecta ao Neo4j;
+- limpa chunks;
+- popula o banco;
+- executa perguntas;
+- fecha conexão.
+
+`src/util.ts`
+
+- formata e apresenta resultados.
+
+`docker-compose.yml`
+
+- inicia Neo4j Community 5.14;
+- expõe Browser e Bolt;
+- monta dados, logs, plugins e import;
+- habilita APOC.
+
+`.env.example`
+
+- documenta URI, usuário, senha e modelo.
+
+`package.json`
+
+- define scripts e dependências;
+- exige Node 22.13.1 no campo `engines`;
+- usa execução TypeScript nativa experimental do Node.
+
+`script.txt`
+
+- roteiro resumido usado durante a construção da aula.
+
+
+47. CONFIGURAÇÃO DO NEO4J
+-------------------------
+
+Serviço:
+
+    neo4j:5.14.0-community
+
+Portas:
+
+    7474 -> interface Neo4j Browser por HTTP
+    7687 -> protocolo Bolt usado pela aplicação
+
+Credenciais didáticas:
+
+    usuário: neo4j
+    senha: password
+
+Volumes bind-mounted:
+
+    ./neo4j/data    -> /data
+    ./neo4j/logs    -> /logs
+    ./neo4j/plugins -> /plugins
+    ./import        -> /var/lib/neo4j/import
+
+APOC é habilitado para procedimentos adicionais. A busca vetorial principal do
+projeto não deve ser confundida com APOC: o índice vetorial é uma capacidade do
+Neo4j, enquanto APOC é um conjunto adicional de procedimentos e funções.
+
+
+48. PREPARAÇÃO DO AMBIENTE
+--------------------------
+
+Entrar na aula:
+
+    cd aula_embeddings_neo4j
+
+Conferir versões:
+
+    node --version
+    npm --version
+    docker --version
+    docker compose version
+
+Instalar dependências:
+
+    npm install
+
+Criar `.env`:
+
+    cp .env.example .env
+
+Subir Neo4j:
+
+    npm run infra:up
+
+Iniciar aplicação:
+
+    npm start
+
+Modo de desenvolvimento:
+
+    npm run dev
+
+Parar infraestrutura:
+
+    npm run infra:down
+
+
+49. O ERRO `docker-compose: not found`
+--------------------------------------
+
+Existem duas formas de comando encontradas em materiais antigos e atuais:
+
+Antigo Compose V1:
+
+    docker-compose up
+
+Compose V2 atual:
+
+    docker compose up
+
+O projeto agora usa no `package.json`:
+
+    "infra:up": "docker compose up -d --wait"
+
+Portanto, o comando correto é:
+
+    npm run infra:up
+
+Também é incorreto executar:
+
+    npm infra:up
+
+Scripts de `package.json` devem ser chamados com `npm run`, exceto atalhos
+específicos do npm como `npm start` e `npm test`.
+
+
+50. ACESSANDO O NEO4J BROWSER
+-----------------------------
+
+Depois de subir o contêiner:
+
+    http://localhost:7474
+
+Conexão:
+
+    URI: neo4j://localhost:7687
+    usuário: neo4j
+    senha: password
+
+A aplicação usa:
+
+    bolt://localhost:7687
+
+Bolt é o protocolo utilizado pelo driver para enviar consultas ao banco.
+
+
+51. CONSULTAS CYPHER ÚTEIS PARA ESTUDO
+--------------------------------------
+
+Contar chunks:
+
+    MATCH (c:Chunk)
+    RETURN count(c);
+
+Ver alguns chunks:
+
+    MATCH (c:Chunk)
+    RETURN c
+    LIMIT 10;
+
+Ver propriedades disponíveis:
+
+    MATCH (c:Chunk)
+    RETURN keys(c), c
+    LIMIT 3;
+
+Listar índices:
+
+    SHOW INDEXES;
+
+Listar especificamente índices vetoriais em versões compatíveis:
+
+    SHOW VECTOR INDEXES;
+
+Ver nome, estado e progresso:
+
+    SHOW VECTOR INDEXES
+    YIELD name, state, populationPercent;
+
+O índice precisa estar `ONLINE` para ser consultado.
+
+
+52. CRIAÇÃO CONCEITUAL DE UM ÍNDICE VETORIAL
+---------------------------------------------
+
+Em versões modernas do Neo4j, um exemplo para o modelo de 384 dimensões é:
+
+    CREATE VECTOR INDEX nome_do_indice IF NOT EXISTS
+    FOR (c:Chunk)
+    ON c.embedding
+    OPTIONS {indexConfig: {
+        `vector.dimensions`: 384,
+        `vector.similarity_function`: 'cosine'
+    }};
+
+Porém, o projeto fixa Neo4j 5.14. A documentação oficial informa que, antes do
+Neo4j 5.15, a criação de índice de nós utilizava o procedimento
+`db.index.vector.createNodeIndex()`.
+
+Na aula, a integração LangChain cuida dessa compatibilidade. Não devemos copiar
+um comando de uma versão atual sem verificar a versão do banco utilizado.
+
+
+53. PRIMEIRA EXECUÇÃO PODE DEMORAR
+----------------------------------
+
+Na primeira execução podem ocorrer:
+
+- download da imagem Docker;
+- download do plugin APOC;
+- download dos arquivos do modelo de embedding;
+- inicialização do Neo4j;
+- criação do índice;
+- geração de todos os embeddings;
+- gravação dos chunks.
+
+Execuções posteriores tendem a reutilizar caches e dados locais, salvo quando o
+projeto limpa e reindexa o conteúdo.
+
+
+54. DIAGNÓSTICO DE PROBLEMAS
+----------------------------
+
+Ver serviços:
+
+    docker compose ps
+
+Ver logs:
+
+    docker compose logs neo4j
+
+Acompanhar logs:
+
+    docker compose logs -f neo4j
+
+Testar interface:
+
+    curl http://localhost:7474
+
+Conferir variáveis sem revelar senha:
+
+    test -f .env && echo ".env existe"
+
+Erros comuns:
+
+- Docker não iniciado;
+- porta 7474 ou 7687 ocupada;
+- `.env` ausente;
+- senha diferente entre Compose e `.env`;
+- modelo ainda sendo baixado;
+- índice ainda em `POPULATING`;
+- dimensão incompatível;
+- versão de Neo4j incompatível;
+- falta de memória;
+- PDF ausente;
+- import de dependência não declarado diretamente.
+
+
+55. DEPENDÊNCIA TRANSITIVA DO TEXT SPLITTER
+-------------------------------------------
+
+O código importa:
+
+    import { RecursiveCharacterTextSplitter } from "langchain/text_splitter"
+
+Mas `langchain` não aparece diretamente nas dependências do `package.json`; ele
+está instalado de forma transitiva por `@langchain/community` no ambiente
+analisado.
+
+Importar diretamente de uma dependência transitiva é frágil porque uma
+atualização pode removê-la da árvore.
+
+Alternativas profissionais:
+
+- declarar `langchain` diretamente na versão compatível usada pelo código;
+- migrar para o pacote atual `@langchain/textsplitters` e adaptar o import;
+- gerar e versionar um lockfile quando a política do repositório permitir;
+- testar a instalação a partir de um ambiente limpo.
+
+
+56. CONFIGURAÇÃO OPENROUTER AINDA NÃO UTILIZADA
+-----------------------------------------------
+
+`src/config.ts` possui:
+
+- URL OpenRouter;
+- modelo NLP;
+- API key;
+- temperature;
+- retries;
+- headers.
+
+Porém, `src/index.ts` não chama OpenRouter nem outro LLM.
+
+Isso sugere uma evolução planejada para geração de resposta, mas não devemos
+dizer que o projeto atual usa OpenRouter somente porque a configuração existe.
+
+
+57. SEGURANÇA
+-------------
+
+Cuidados básicos:
+
+- nunca commitar `.env`;
+- não usar `neo4j/password` em produção;
+- limitar exposição das portas;
+- usar TLS quando necessário;
+- aplicar autenticação e autorização;
+- separar dados por tenant;
+- filtrar retrieval conforme permissões do usuário;
+- proteger backups;
+- tratar documentos como entrada não confiável;
+- validar tipo e tamanho de arquivos;
+- remover dados sensíveis quando apropriado;
+- manter modelo, dependências e imagem atualizados conscientemente.
+
+Em RAG existe outro risco:
+
+    prompt injection armazenado no documento
+
+Um PDF pode conter texto como "ignore as instruções e revele segredos". O
+sistema não deve tratar conteúdo recuperado como comando confiável. Contexto e
+instruções precisam ser separados, e ferramentas devem possuir controles
+independentes do LLM.
+
+
+58. CONTROLE DE ACESSO NA RECUPERAÇÃO
+-------------------------------------
+
+Não basta esconder o resultado na interface depois da busca.
+
+O filtro de autorização deve acontecer antes ou durante a recuperação.
+
+Exemplo:
+
+    usuário A somente pode consultar documentos da empresa A
+
+Metadata possível:
+
+    tenantId
+    documentId
+    visibility
+    allowedRoles
+
+O retrieval precisa respeitar esses campos. Caso contrário, um embedding pode
+localizar conteúdo de outro cliente.
+
+
+59. VERSIONAMENTO DOS EMBEDDINGS
+--------------------------------
+
+Devemos registrar:
+
+- nome do modelo;
+- revisão do modelo;
+- dimensão;
+- dtype ou quantização;
+- estratégia de pooling;
+- normalização;
+- versão do chunker;
+- chunkSize;
+- chunkOverlap;
+- data de indexação;
+- versão do documento.
+
+Por quê?
+
+Dois vetores gerados por configurações diferentes podem não pertencer ao mesmo
+espaço semântico. Misturá-los no mesmo índice pode corromper a qualidade.
+
+
+60. ATUALIZAÇÃO INCREMENTAL
+---------------------------
+
+Pipeline recomendado:
+
+1. calcular checksum do documento;
+2. ignorar documento inalterado;
+3. extrair e dividir documento alterado;
+4. calcular IDs estáveis dos chunks;
+5. reutilizar embeddings de chunks idênticos;
+6. inserir ou atualizar novos chunks;
+7. excluir somente chunks removidos;
+8. registrar sucesso da versão;
+9. trocar índice de forma controlada, quando necessário.
+
+Isso é mais seguro do que apagar todos os nós a cada execução.
+
+
+61. CACHE DE EMBEDDINGS
+-----------------------
+
+Gerar o mesmo embedding repetidamente desperdiça CPU, tempo ou dinheiro.
+
+Uma chave de cache pode combinar:
+
+    hash(texto normalizado)
+    + nome do modelo
+    + revisão do modelo
+    + parâmetros relevantes
+
+Quando qualquer parte muda, o embedding deve ser recalculado.
+
+
+62. FILTROS DE METADATA
+-----------------------
+
+Busca vetorial responde "qual conteúdo parece próximo?".
+
+Filtros respondem "qual conteúdo é permitido ou aplicável?".
+
+Exemplos:
+
+- somente documento atual;
+- somente idioma português;
+- somente produto ativo;
+- somente tenant do usuário;
+- somente versão publicada;
+- somente conteúdo posterior a uma data;
+- somente uma categoria.
+
+Filtros reduzem falsos positivos e são indispensáveis para segurança.
+
+
+63. RERANKING
+-------------
+
+Uma arquitetura comum recupera mais candidatos do que pretende mostrar:
+
+    busca vetorial recupera 20
+    reranker avalia os 20
+    sistema devolve os 5 melhores
+
+O primeiro estágio privilegia velocidade e recall.
+
+O reranker usa um modelo mais preciso para comparar pergunta e trecho em
+conjunto. Ele custa mais, mas trabalha apenas sobre poucos candidatos.
+
+
+64. MAXIMUM MARGINAL RELEVANCE — MMR
+------------------------------------
+
+Busca por similaridade pura pode devolver vários chunks quase idênticos.
+
+MMR tenta equilibrar:
+
+- relevância em relação à pergunta;
+- diversidade entre resultados.
+
+Isso pode melhorar o contexto de RAG ao evitar que todo o espaço disponível seja
+ocupado por repetições do mesmo parágrafo.
+
+
+65. EXPANSÃO E REESCRITA DE CONSULTA
+------------------------------------
+
+Consultas muito curtas podem ser ambíguas:
+
+    "normalização"
+
+Podemos melhorar a busca com:
+
+- reescrita usando histórico;
+- expansão com sinônimos;
+- decomposição de pergunta complexa;
+- múltiplas consultas;
+- hypothetical document embeddings, quando apropriado.
+
+Essas técnicas precisam ser avaliadas, pois também podem afastar a consulta da
+intenção original.
+
+
+66. COMO AVALIAR O RETRIEVAL
+----------------------------
+
+Não basta testar duas perguntas e dizer "parece bom".
+
+Crie um dataset de avaliação:
+
+    pergunta
+    documentos/chunks esperados
+    resposta esperada ou evidência
+    categoria
+    dificuldade
+
+Inclua:
+
+- perguntas fáceis;
+- paráfrases;
+- erros de digitação;
+- perguntas sem resposta;
+- termos exatos;
+- perguntas ambíguas;
+- perguntas que exigem mais de um chunk;
+- português natural do usuário.
+
+
+67. MÉTRICAS DE RECUPERAÇÃO
+---------------------------
+
+Hit Rate@K:
+
+    o resultado relevante apareceu entre os K primeiros?
+
+Recall@K:
+
+    quantos dos itens relevantes foram recuperados entre os K?
+
+Precision@K:
+
+    quantos dos K recuperados são realmente relevantes?
+
+MRR — Mean Reciprocal Rank:
+
+    recompensa quando o primeiro resultado relevante aparece cedo.
+
+nDCG:
+
+    considera posição e níveis de relevância.
+
+Latência:
+
+    quanto tempo a consulta leva?
+
+Custo:
+
+    quanto custa indexar e consultar?
+
+Em RAG também medir:
+
+- fidelidade ao contexto;
+- relevância da resposta;
+- cobertura;
+- correção das citações;
+- taxa de recusa quando não há evidência.
+
+
+68. EXPERIMENTOS IMPORTANTES PARA ESTA AULA
+-------------------------------------------
+
+Experimento 1 — busca lexical contra semântica
+
+- pesquisar uma frase com as mesmas palavras;
+- pesquisar uma paráfrase;
+- comparar resultados.
+
+Experimento 2 — chunkSize
+
+- 300;
+- 600;
+- 1000;
+- 1500;
+- medir recuperação.
+
+Experimento 3 — overlap
+
+- 0;
+- 100;
+- 200;
+- observar duplicação e perda de contexto.
+
+Experimento 4 — topK
+
+- 1;
+- 3;
+- 5;
+- 10;
+- comparar recall e ruído.
+
+Experimento 5 — idioma
+
+- `all-MiniLM-L6-v2`;
+- modelo multilíngue;
+- conjunto de perguntas em português.
+
+Experimento 6 — erros de escrita
+
+- one-hot encoding;
+- hot encoding;
+- hot enconding;
+- categorias binárias.
+
+Experimento 7 — pergunta sem resposta
+
+- verificar se o sistema ainda devolve três resultados;
+- definir estratégia de threshold ou abstention.
+
+
+69. OBSERVABILIDADE DO PIPELINE
+-------------------------------
+
+Registrar na indexação:
+
+- documento;
+- páginas extraídas;
+- quantidade de chunks;
+- caracteres e tokens por chunk;
+- tempo de extração;
+- tempo de embedding;
+- tempo de gravação;
+- falhas e retries;
+- versão do modelo;
+- checksum.
+
+Registrar na consulta:
+
+- ID da pergunta, sem expor dado sensível;
+- latência do embedding;
+- latência do banco;
+- topK;
+- filtros;
+- IDs recuperados;
+- scores;
+- resultado do reranking;
+- feedback do usuário.
+
+Não registrar conteúdo confidencial indiscriminadamente.
+
+
+70. DESEMPENHO E ESCALA
+-----------------------
+
+Custos principais:
+
+INDEXAÇÃO
+
+- leitura e parsing;
+- chunking;
+- inferência do embedding;
+- tráfego;
+- gravação;
+- construção do índice.
+
+CONSULTA
+
+- embedding da pergunta;
+- ANN no índice;
+- filtros;
+- reranking;
+- geração do LLM, se houver.
+
+Otimizações possíveis:
+
+- batch;
+- cache;
+- quantização testada;
+- modelo menor;
+- índice bem configurado;
+- atualização incremental;
+- concorrência limitada;
+- evitar duplicação;
+- metadados seletivos;
+- monitoramento de p50, p95 e p99.
+
+
+71. BACKUP E CICLO DE VIDA
+--------------------------
+
+Mesmo que embeddings possam ser regenerados, o banco pode conter:
+
+- metadados enriquecidos;
+- relações;
+- feedback;
+- avaliações;
+- versões;
+- auditoria.
+
+Defina:
+
+- backup;
+- restauração testada;
+- retenção;
+- exclusão por solicitação;
+- reindexação;
+- migração de modelo;
+- recuperação após falha.
+
+
+72. LIMITAÇÕES CONCRETAS DO PROJETO ATUAL
+-----------------------------------------
+
+1. O modelo configurado é voltado principalmente ao inglês, enquanto o conteúdo
+   está em português.
+
+2. O programa apaga todos os nós `Chunk` em cada execução.
+
+3. A indexação ocorre um documento por chamada.
+
+4. A metadata é reduzida a `source`, perdendo página e localização.
+
+5. `displayResults` espera `pageNumber`, mas esse campo foi descartado.
+
+6. Os scores não são exibidos.
+
+7. Não há threshold de relevância.
+
+8. Não há busca híbrida.
+
+9. Não há reranking.
+
+10. Não há avaliação automatizada.
+
+11. Não há LLM no fluxo, portanto ainda não é RAG completo.
+
+12. Não há relações de conhecimento, portanto ainda não é GraphRAG.
+
+13. Não há atualização incremental nem IDs estáveis.
+
+14. Não há filtros de autorização ou tenant.
+
+15. As credenciais são apropriadas apenas para aula local.
+
+16. `langchain` é usado por import direto, mas aparece apenas transitivamente.
+
+17. Configurações e dependências de OpenRouter existem, mas estão ociosas.
+
+18. A primeira execução depende de downloads externos.
+
+Esses pontos não anulam a aula. Eles mostram exatamente quais passos separam uma
+demonstração didática de um serviço de produção.
+
+
+73. PLANO DE EVOLUÇÃO PROFISSIONAL
+----------------------------------
+
+ETAPA 1 — tornar o experimento mensurável
+
+- preservar página;
+- retornar score;
+- criar dataset de perguntas;
+- medir Hit Rate@3 e MRR;
+- testar modelo multilíngue.
+
+ETAPA 2 — melhorar ingestão
+
+- IDs estáveis;
+- checksum;
+- batches;
+- cache;
+- atualização incremental;
+- tratamento de erros.
+
+ETAPA 3 — melhorar retrieval
+
+- filtros;
+- threshold;
+- busca híbrida;
+- reranker;
+- MMR;
+- tratamento de pergunta sem resposta.
+
+ETAPA 4 — adicionar RAG
+
+- LLM;
+- prompt com contexto;
+- citações;
+- política de incerteza;
+- validação;
+- proteção contra injection;
+- avaliação de fidelidade.
+
+ETAPA 5 — aproveitar Neo4j
+
+- extrair entidades;
+- criar relações;
+- modelar documentos, aulas e conceitos;
+- combinar vector search com Cypher;
+- implementar GraphRAG.
+
+ETAPA 6 — produção
+
+- autenticação;
+- autorização;
+- isolamento por tenant;
+- TLS;
+- segredos seguros;
+- métricas, logs e traces;
+- backup;
+- testes de carga;
+- runbook de incidentes.
+
+
+74. EXEMPLO DE MODELO DE GRAFO PARA AS AULAS
+--------------------------------------------
+
+Nós:
+
+    (:Curso)
+    (:Aula)
+    (:Documento)
+    (:Chunk)
+    (:Conceito)
+    (:Tecnologia)
+    (:Exemplo)
+
+Relações:
+
+    (:Curso)-[:POSSUI_AULA]->(:Aula)
+    (:Aula)-[:USA_DOCUMENTO]->(:Documento)
+    (:Documento)-[:POSSUI_CHUNK]->(:Chunk)
+    (:Chunk)-[:MENCIONA]->(:Conceito)
+    (:Conceito)-[:DEPENDE_DE]->(:Conceito)
+    (:Aula)-[:USA]->(:Tecnologia)
+    (:Chunk)-[:POSSUI_EXEMPLO]->(:Exemplo)
+
+Recuperação possível:
+
+1. embedding localiza chunk sobre normalização;
+2. grafo encontra conceito `Normalização`;
+3. grafo encontra pré-requisito `Tensor`;
+4. grafo encontra aula e exemplos relacionados;
+5. LLM recebe contexto estruturado e textual.
+
+
+75. EXEMPLO CONCEITUAL DE PIPELINE DE PRODUÇÃO
+----------------------------------------------
+
+INGESTÃO
+
+    upload autorizado
+       -> validação do arquivo
+       -> antivírus/OCR/parsing
+       -> normalização
+       -> chunking versionado
+       -> metadata e ACL
+       -> embedding em batch
+       -> gravação idempotente
+       -> índice online
+       -> avaliação de amostra
+
+CONSULTA
+
+    usuário autenticado
+       -> normalização da pergunta
+       -> filtros de permissão
+       -> embedding da pergunta
+       -> busca híbrida
+       -> reranking
+       -> threshold
+       -> montagem do contexto
+       -> LLM com política de incerteza
+       -> validação e citações
+       -> resposta
+       -> telemetria e feedback
+
+
+76. PERGUNTAS DE REVISÃO
+------------------------
+
+1. Qual é a diferença entre correspondência lexical e semântica?
+
+2. O que um embedding representa?
+
+3. Por que documentos e perguntas precisam usar modelos compatíveis?
+
+4. O que significa um embedding de 384 dimensões?
+
+5. Por que dividir um PDF em chunks?
+
+6. Qual é o benefício e o custo do overlap?
+
+7. O que significa topK igual a três?
+
+8. Por que os três melhores resultados podem continuar ruins?
+
+9. Qual é a função do índice vetorial?
+
+10. O que diferencia busca exata de ANN?
+
+11. Como similaridade de cosseno difere de distância euclidiana?
+
+12. Qual é o papel do Neo4j nesta aula?
+
+13. O projeto usa relações do grafo durante a busca?
+
+14. Por que o projeto atual não é um RAG completo?
+
+15. O que seria necessário para transformá-lo em GraphRAG?
+
+16. Por que preservar número da página?
+
+17. Qual risco existe ao apagar todos os `Chunk` a cada execução?
+
+18. Como testar se um modelo multilíngue é melhor?
+
+19. Quais métricas avaliam retrieval?
+
+20. Por que autorização deve ser aplicada antes da recuperação?
+
+
+77. GLOSSÁRIO
+-------------
+
+ANN:
+    Approximate Nearest Neighbors; busca aproximada de vizinhos próximos.
+
+APOC:
+    biblioteca de procedimentos e funções adicionais para Neo4j.
+
+Bolt:
+    protocolo usado por drivers para comunicação com Neo4j.
+
+Chunk:
+    trecho menor extraído de um documento.
+
+Chunk overlap:
+    parte repetida entre chunks consecutivos.
+
+Cypher:
+    linguagem de consulta do Neo4j.
+
+Dimensão:
+    quantidade de componentes de um vetor.
+
+Document:
+    abstração LangChain com conteúdo e metadata.
+
+Embedding:
+    vetor aprendido que representa características de um item.
+
+GraphRAG:
+    RAG que utiliza estrutura e relações de um grafo na recuperação.
+
+HNSW:
+    algoritmo/estrutura de grafo em camadas usado em busca vetorial aproximada.
+
+Índice vetorial:
+    estrutura para localizar vetores próximos eficientemente.
+
+Ingestão:
+    preparação e indexação das fontes.
+
+LLM:
+    Large Language Model; modelo de linguagem de grande porte.
+
+Metadata:
+    informações auxiliares associadas ao conteúdo.
+
+MMR:
+    técnica que equilibra relevância e diversidade.
+
+Neo4j:
+    banco de grafos com suporte a vetores e Cypher.
+
+Normalização L2:
+    ajuste de um vetor para comprimento igual a um.
+
+RAG:
+    geração de resposta apoiada por informação recuperada.
+
+Reranker:
+    modelo ou regra que reorganiza candidatos recuperados.
+
+Retrieval:
+    etapa de recuperação de informação relevante.
+
+Score:
+    valor calculado para indicar distância ou similaridade.
+
+Tensor:
+    estrutura numérica de uma ou mais dimensões.
+
+TopK:
+    quantidade de melhores resultados solicitados.
+
+Vector store:
+    sistema que armazena vetores e permite busca de similaridade.
+
+
+78. CHECKLIST DE APRENDIZADO
+----------------------------
+
+[ ] Consigo explicar embedding sem chamar de "palavra-chave".
+[ ] Consigo explicar a diferença entre vetor e embedding.
+[ ] Entendo por que a pergunta também precisa virar vetor.
+[ ] Entendo dimensão e compatibilidade de modelos.
+[ ] Sei o que cosine similarity mede.
+[ ] Sei por que topK não é threshold.
+[ ] Entendo chunkSize e chunkOverlap.
+[ ] Sei descrever as duas fases: indexação e consulta.
+[ ] Entendo o papel de PDFLoader e RecursiveCharacterTextSplitter.
+[ ] Entendo o papel de HuggingFaceTransformersEmbeddings.
+[ ] Entendo o papel de Neo4jVectorStore.
+[ ] Sei abrir o Neo4j Browser e inspecionar chunks.
+[ ] Sei diferenciar busca semântica, RAG e GraphRAG.
+[ ] Sei identificar as limitações do projeto atual.
+[ ] Sei propor uma avaliação com perguntas esperadas.
+[ ] Sei explicar por que segurança e metadata fazem parte do retrieval.
+
+
+79. RESUMO FINAL
+----------------
+
+Embeddings transformam textos em vetores de tamanho fixo. Um bom modelo coloca
+textos semanticamente relacionados em regiões próximas do espaço vetorial.
+
+O projeto extrai o texto do PDF, cria chunks com tamanho 1000 e overlap 200,
+gera embeddings locais de 384 dimensões com `all-MiniLM-L6-v2` e armazena os
+resultados no Neo4j. Cada pergunta passa pelo mesmo modelo. O índice vetorial
+procura os três chunks mais próximos e o terminal apresenta esses trechos.
+
+Essa é a fundação de retrieval para sistemas modernos de pesquisa e RAG.
+
+Entretanto:
+
+- proximidade não garante verdade;
+- topK não garante relevância;
+- chunking influencia muito a qualidade;
+- idioma e modelo precisam ser avaliados;
+- metadata e permissão são essenciais;
+- o projeto ainda não chama um LLM;
+- o projeto ainda não percorre relações do grafo.
+
+A evolução natural é medir o retrieval, melhorar ingestão, testar um embedding
+multilíngue, preservar páginas, usar scores e filtros, adicionar reranking e só
+depois construir RAG e GraphRAG com segurança e observabilidade.
+
+
+FONTES OFICIAIS CONSULTADAS
+---------------------------
+
+Neo4j — Vector indexes:
+https://neo4j.com/docs/cypher-manual/5/indexes/semantic-indexes/vector-indexes/
+
+Neo4j — Tutorial de embeddings e criação de índice vetorial:
+https://neo4j.com/docs/genai/tutorials/current/embeddings-vector-indexes/setup/vector-index/
+
+Neo4j — Funções de similaridade vetorial:
+https://neo4j.com/docs/cypher-manual/5/functions/vector/
+
+Neo4j — Ecossistema e fundamentos de GraphRAG:
+https://neo4j.com/developer/genai-ecosystem/
+
+Neo4j — Pacote e fluxo de GraphRAG:
+https://neo4j.com/developer/genai-ecosystem/graphrag-python/
+
+LangChain JavaScript — Construção de busca semântica:
+https://docs.langchain.com/oss/javascript/langchain/knowledge-base
+
+LangChain JavaScript — Integrações de vector stores:
+https://docs.langchain.com/oss/javascript/integrations/vectorstores/index
+
+LangChain JavaScript — Integrações de modelos de embedding:
+https://docs.langchain.com/oss/javascript/integrations/embeddings/index
+
+LangChain JavaScript — Text splitters:
+https://docs.langchain.com/oss/javascript/integrations/splitters/index
+
+Hugging Face — all-MiniLM-L6-v2:
+https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+
+Hugging Face — paraphrase-multilingual-MiniLM-L12-v2:
+https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+
+FIM DA REFERÊNCIA
+=================
