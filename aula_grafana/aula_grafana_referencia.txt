@@ -1,0 +1,2104 @@
+AULA EXTRA — GRAFANA, OBSERVABILIDADE E OPENTELEMETRY
+====================================================
+
+Projeto Alumnus / N|Sentinel para visualizar a saúde do sistema e investigar
+problemas com métricas, logs, traces, alertas e Inteligência Artificial.
+
+Data da análise do projeto: 30/08/2026
+
+
+OBJETIVO DA AULA
+----------------
+
+Esta aula apresenta uma stack completa de observabilidade executada com Docker.
+
+O projeto permite:
+
+- acompanhar se os serviços estão disponíveis;
+- medir quantidade, duração e erros das requisições;
+- centralizar logs;
+- visualizar o caminho de uma requisição;
+- correlacionar métricas, logs e traces;
+- criar e avaliar alertas;
+- investigar um bug realista de vazamento de conexões PostgreSQL;
+- consultar a stack por Grafana MCP;
+- entender o papel do OpenTelemetry.
+
+Resposta curta para a dúvida inicial:
+
+    Sim, este projeto usa OpenTelemetry.
+
+A aplicação Node.js produz traces, métricas e logs. Ela envia esses sinais por
+OTLP/gRPC para o OpenTelemetry Collector. O Collector distribui os sinais para
+Tempo, Loki e Prometheus. O Grafana consulta esses backends e apresenta uma visão
+unificada da saúde e do comportamento do sistema.
+
+
+1. O QUE ESTE PROJETO REALMENTE É
+----------------------------------
+
+O projeto não é apenas um dashboard bonito.
+
+Ele é um laboratório de observabilidade composto por:
+
+- uma aplicação Fastify em TypeScript;
+- um banco PostgreSQL;
+- instrumentação OpenTelemetry;
+- OpenTelemetry Collector;
+- Prometheus;
+- Loki;
+- Tempo;
+- Grafana;
+- Blackbox Exporter;
+- regras de alerta;
+- dashboards provisionados;
+- testes de telemetria;
+- Grafana MCP;
+- um cenário proposital de falha.
+
+Seu objetivo didático é mostrar como detectar e explicar problemas que seriam
+difíceis de entender apenas olhando uma mensagem de erro.
+
+
+2. MONITORAMENTO E OBSERVABILIDADE
+---------------------------------
+
+Monitoramento costuma responder perguntas conhecidas:
+
+- o serviço está online?
+- a latência passou do limite?
+- a taxa de erro está alta?
+- o banco aceita conexão?
+
+Observabilidade ajuda a investigar perguntas que ainda não estavam previstas:
+
+- por que as duas primeiras requisições funcionam e as seguintes falham?
+- qual operação ficou lenta?
+- qual consulta de banco pertence a esta requisição?
+- qual erro apareceu no mesmo trace?
+- a falha é na aplicação ou na infraestrutura?
+
+Monitoramento detecta sintomas. Observabilidade fornece evidências para explorar
+o estado interno do sistema.
+
+
+3. TELEMETRIA
+-------------
+
+Telemetria é o conjunto de sinais enviados pelo sistema para que possamos
+entender seu comportamento.
+
+Os sinais principais desta aula são:
+
+1. métricas;
+2. logs;
+3. traces.
+
+OpenTelemetry também trabalha com contexto distribuído e baggage. Perfis são
+outro sinal relacionado à observabilidade moderna, mas não fazem parte desta
+stack atual.
+
+
+4. MÉTRICAS
+-----------
+
+Métricas são valores numéricos observados ao longo do tempo.
+
+Exemplos:
+
+- quantidade de requisições;
+- taxa de respostas 500;
+- duração média;
+- p95 de latência;
+- conexões em uso;
+- probe_success;
+- memória utilizada;
+- quantidade de spans exportados.
+
+São excelentes para:
+
+- dashboards;
+- tendências;
+- agregações;
+- alertas;
+- comparar antes e depois;
+- responder "quanto?" e "com que frequência?".
+
+
+5. LOGS
+-------
+
+Logs são registros de eventos.
+
+Exemplos do projeto:
+
+    Processing student query request
+    Error processing request
+    Manual reset requested
+    DB Leaky Connections scenario initialized
+
+Logs podem conter:
+
+- data e hora;
+- nível;
+- mensagem;
+- stack trace;
+- service.name;
+- trace_id;
+- span_id;
+- atributos estruturados.
+
+Eles ajudam a responder:
+
+- o que a aplicação registrou?
+- qual erro foi lançado?
+- qual arquivo aparece no stack trace?
+- em que ordem os eventos ocorreram?
+
+
+6. TRACES
+---------
+
+Um trace representa o caminho de uma operação pelo sistema.
+
+Cada etapa é normalmente representada por um span.
+
+Exemplo:
+
+    trace da requisição GET
+        |
+        +-- span Fastify
+        |
+        +-- span para adquirir conexão PostgreSQL
+        |
+        +-- span SELECT
+        |
+        +-- status e duração
+
+Um trace ajuda a responder:
+
+- onde o tempo foi gasto?
+- qual componente falhou?
+- qual foi a hierarquia das operações?
+- quais atributos pertencem à requisição?
+- qual log foi produzido durante esse caminho?
+
+
+7. CORRELAÇÃO DOS SINAIS
+--------------------------
+
+Separadamente:
+
+- métrica mostra que erros aumentaram;
+- log mostra timeout ao obter conexão;
+- trace mostra a operação e sua duração.
+
+Juntos:
+
+    sintoma -> evento detalhado -> caminho da requisição -> causa provável
+
+Uma investigação forte cruza os sinais em vez de confiar em apenas um gráfico.
+
+
+8. ARQUITETURA COMPLETA DO PROJETO
+---------------------------------
+
+    Aplicação Fastify + PostgreSQL
+                |
+                | OTLP/gRPC :4317
+                v
+       OpenTelemetry Collector
+                |
+       +--------+---------+
+       |                  |
+       | traces           | logs
+       v                  v
+     Tempo               Loki
+       |
+       | metrics da aplicação são expostas em :8889
+       |                  |
+       +--------+---------+
+                |
+                v
+            Prometheus
+                |
+       +--------+---------+
+       |                  |
+       v                  v
+   dashboards           alertas
+                |
+                v
+              Grafana
+
+Em paralelo:
+
+    Blackbox Exporter -> testa HTTP, TCP e ICMP
+             |
+             v
+         Prometheus -> Grafana / alertas
+
+E para IA:
+
+    agente MCP -> mcp-grafana -> Grafana e datasources
+
+
+9. CAMINHO EXATO DE CADA SINAL
+-----------------------------
+
+TRACES
+
+    app -> OTLP/gRPC -> Collector -> OTLP/gRPC -> Tempo -> Grafana
+
+LOGS
+
+    app -> OTLP/gRPC -> Collector -> OTLP/HTTP -> Loki -> Grafana
+
+MÉTRICAS DA APLICAÇÃO
+
+    app -> OTLP/gRPC -> Collector
+        -> exporter Prometheus em :8889
+        -> Prometheus faz scrape
+        -> Grafana consulta Prometheus
+
+PROBES EXTERNAS
+
+    Prometheus pede probe -> Blackbox verifica o destino
+        -> Blackbox devolve métricas
+        -> Prometheus armazena
+        -> Grafana exibe e regras avaliam
+
+
+10. A APLICAÇÃO ALUMNUS
+--------------------------
+
+Localização:
+
+    aula_grafana/alumnus/_alumnus
+
+Tecnologias:
+
+- Node.js 22;
+- TypeScript executado com --experimental-strip-types;
+- Fastify;
+- Knex;
+- pg;
+- Pino;
+- OpenTelemetry SDK para Node;
+- instrumentações automáticas.
+
+Porta padrão:
+
+    9000
+
+Endpoint básico:
+
+    GET /health
+
+Resposta:
+
+    { "message": "ok" }
+
+
+11. INICIALIZAÇÃO DA APLICAÇÃO
+------------------------------------
+
+Fluxo em src/index.ts:
+
+1. carrega configuração;
+2. chama initServer;
+3. inicializa OpenTelemetry;
+4. cria Fastify;
+5. conecta ao PostgreSQL;
+6. recria e popula tabelas;
+7. inicializa cenários;
+8. registra rotas;
+9. inicia servidor em 0.0.0.0:9000.
+
+Quando NODE_ENV é production, o programa também executa uma requisição ao
+cenário defeituoso a cada dois segundos. Isso produz continuamente:
+
+- spans;
+- métricas;
+- logs;
+- sucessos iniciais;
+- erros posteriores.
+
+Esse comportamento é intencional para alimentar o laboratório.
+
+
+12. CUIDADO COM O SEED DO BANCO
+------------------------------
+
+Ao iniciar, seedDb executa:
+
+- DROP TABLE IF EXISTS courses;
+- DROP TABLE IF EXISTS students;
+- recria as tabelas;
+- insere cursos;
+- insere um estudante.
+
+Isso é adequado para demonstração e testes.
+
+Não é adequado para um banco de produção porque reiniciar a aplicação apaga e
+recria dados dessas tabelas.
+
+
+13. OPENTELEMETRY NO CÓDIGO
+----------------------------
+
+Arquivo:
+
+    _alumnus/src/monitoring/otel.ts
+
+O projeto cria um NodeSDK e configura:
+
+- serviceName baseado em APPNAME;
+- OTLPTraceExporter;
+- OTLPMetricExporter;
+- OTLPLogExporter;
+- PeriodicExportingMetricReader;
+- BatchSpanProcessor;
+- BatchLogRecordProcessor;
+- instrumentação automática do Node;
+- instrumentação Fastify;
+- instrumentação Knex.
+
+O SDK é iniciado antes da criação efetiva do servidor, permitindo que as
+bibliotecas sejam instrumentadas durante o ciclo da aplicação.
+
+
+14. INSTRUMENTAÇÃO AUTOMÁTICA
+-------------------------------
+
+getNodeAutoInstrumentations ativa instrumentações suportadas para bibliotecas
+comuns.
+
+O projeto desabilita Fastify e Knex dentro do pacote genérico e adiciona essas
+duas explicitamente:
+
+    FastifyOtelInstrumentation
+    KnexInstrumentation
+
+Motivo registrado no código:
+
+    evitar instrumentação duplicada.
+
+Sem esse cuidado, uma mesma operação poderia gerar spans duplicados ou confusos.
+
+
+15. EXPORTAÇÃO DE MÉTRICAS
+----------------------------
+
+O PeriodicExportingMetricReader está configurado com:
+
+    exportIntervalMillis: 3000
+
+Isso significa que o SDK tenta exportar métricas a cada três segundos.
+
+O destino padrão vem de:
+
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+No ambiente Docker interno, o endpoint correspondente deve apontar para:
+
+    http://opentelemetry-collector:4317
+
+
+16. PROCESSAMENTO DE SPANS
+-------------------------
+
+O BatchSpanProcessor acumula spans e exporta em lotes.
+
+Configuração do projeto:
+
+- fila máxima: 2048;
+- lote máximo: 512;
+- atraso programado: 5000 ms;
+- timeout de exportação: 30000 ms.
+
+O lote reduz a sobrecarga de enviar cada span individualmente.
+
+No encerramento, shutDownOtel chama sdk.shutdown() para tentar descarregar a
+telemetria restante.
+
+
+17. O QUE É OTLP
+-----------------
+
+OTLP significa OpenTelemetry Protocol.
+
+É o protocolo usado para transportar sinais OpenTelemetry.
+
+Neste projeto, a aplicação envia por OTLP/gRPC na porta 4317.
+
+OTLP não é:
+
+- Grafana;
+- Prometheus;
+- um banco;
+- um dashboard.
+
+Ele é o formato e protocolo de transporte entre componentes de telemetria.
+
+
+18. OPENTELEMETRY COLLECTOR
+---------------------------
+
+O Collector funciona como hub central e independente de fornecedor.
+
+Responsabilidades:
+
+- receber telemetria;
+- processar;
+- agrupar;
+- tentar novamente em falhas configuradas;
+- exportar para backends diferentes;
+- expor sua própria saúde e métricas.
+
+Vantagem arquitetural:
+
+    a aplicação conhece OTLP e o Collector;
+    ela não precisa conhecer detalhes de Tempo, Loki e Prometheus.
+
+
+19. RECEIVER, PROCESSOR E EXPORTER
+---------------------------------
+
+RECEIVER
+
+Recebe dados.
+
+No projeto:
+
+    receiver OTLP/gRPC em 0.0.0.0:4317
+
+PROCESSOR
+
+Transforma, agrupa, filtra ou enriquece.
+
+No projeto:
+
+    batch
+
+EXPORTER
+
+Envia o resultado ao destino.
+
+No projeto:
+
+- otlp/tempo;
+- otlphttp/loki;
+- prometheus.
+
+
+20. PIPELINES DO COLLECTOR
+--------------------------
+
+Pipeline de traces:
+
+    receiver otlp -> processor batch -> exporter otlp/tempo
+
+Pipeline de métricas:
+
+    receiver otlp -> processor batch -> exporter prometheus
+
+Pipeline de logs:
+
+    receiver otlp -> processor batch -> exporter otlphttp/loki
+
+O mesmo receiver recebe os três tipos, mas cada pipeline possui seu tipo e seu
+destino.
+
+
+21. EXTENSÕES DO COLLECTOR
+--------------------------
+
+O projeto habilita:
+
+- zpages em :55679;
+- health_check em :13133;
+- telemetria interna detalhada.
+
+Prometheus também faz blackbox probe no health check do Collector.
+
+Observação:
+
+As portas 55679 e 13133 não estão publicadas no host pelo compose atual. Elas são
+acessíveis na rede interna do Docker, o que reduz exposição externa.
+
+
+22. PROMETHEUS
+--------------
+
+Prometheus é o backend de métricas e mecanismo de alertas por regras.
+
+Ele armazena séries temporais formadas por:
+
+- nome da métrica;
+- labels;
+- valor;
+- timestamp.
+
+Exemplo:
+
+    probe_success{job="blackbox-http",instance="http://grafana:3000/api/health"} 1
+
+Neste projeto, Prometheus:
+
+- faz scrape do exporter do Collector em :8889;
+- coleta métricas internas de Tempo;
+- coleta métricas internas de Grafana;
+- coleta métricas internas de Loki;
+- coleta métricas do Blackbox Exporter;
+- executa probes HTTP, TCP e ICMP via Blackbox;
+- avalia alerts.yaml;
+- aceita remote write do gerador de métricas do Tempo;
+- guarda exemplars.
+
+
+23. MODELO PULL DO PROMETHEUS
+----------------------------
+
+O Prometheus normalmente busca métricas nos alvos por HTTP.
+
+No fluxo da aplicação existem duas etapas:
+
+1. a aplicação empurra métricas por OTLP para o Collector;
+2. o Collector expõe essas métricas em :8889 e o Prometheus faz scrape.
+
+Portanto:
+
+    app faz push para Collector;
+    Prometheus faz pull do Collector.
+
+
+24. PROMQL
+----------
+
+PromQL é a linguagem de consulta do Prometheus.
+
+Consultas presentes ou relacionadas ao projeto:
+
+Ver saúde dos alvos de scrape:
+
+    up
+
+Ver probes:
+
+    probe_success
+
+Ver probes HTTP:
+
+    probe_success{job="blackbox-http"}
+
+Ver duração da probe:
+
+    probe_duration_seconds{job="blackbox-http"}
+
+Teste automatizado da aplicação:
+
+    http_client_request_duration_seconds_count{exported_job="NOME_DO_SERVICO"}
+
+Os dashboards também usam nomes normalizados como:
+
+    http_server_duration_milliseconds_count
+    http_server_duration_milliseconds_sum
+
+Os nomes podem variar com versão das convenções e normalização do Collector.
+Antes de copiar uma query, confirme o nome real no explorador de métricas do
+Prometheus.
+
+
+25. LABELS E CARDINALIDADE
+-------------------------
+
+Labels tornam métricas multidimensionais.
+
+Boas labels:
+
+- service_name;
+- http_method;
+- http_route;
+- http_status_code;
+- environment.
+
+Labels perigosas:
+
+- user_id;
+- request_id;
+- UUID aleatório;
+- URL completa com parâmetros;
+- mensagem de erro inteira.
+
+Valores quase únicos geram alta cardinalidade, aumentam custo de memória e
+armazenamento e podem degradar consultas.
+
+
+26. LOKI
+--------
+
+Loki é o backend de agregação de logs.
+
+Neste projeto:
+
+- recebe logs do Collector via OTLP/HTTP;
+- escuta API HTTP na porta 3100;
+- usa armazenamento local;
+- usa schema v13;
+- trabalha sem autenticação no laboratório;
+- é configurado como datasource do Grafana.
+
+Loki indexa principalmente labels dos streams em vez de indexar integralmente o
+conteúdo de cada linha.
+
+
+27. LOGQL
+---------
+
+LogQL é a linguagem de consulta do Loki.
+
+Consulta usada pelos testes:
+
+    {service_name="NOME_DO_SERVICO"}
+
+Exemplo para procurar erros:
+
+    {service_name="NOME_DO_SERVICO"} |= "Error"
+
+Exemplo conceitual para JSON estruturado:
+
+    {service_name="NOME_DO_SERVICO"} | json | level="error"
+
+Sempre limite a janela temporal. Consultas amplas em logs podem processar grande
+volume e revelar informações sensíveis.
+
+
+28. TEMPO
+---------
+
+Tempo é o backend de tracing distribuído.
+
+No projeto:
+
+- recebe OTLP/gRPC na rede interna;
+- expõe API HTTP em :3200;
+- armazena localmente em /var/tempo;
+- retém traces por 24 horas para a demonstração;
+- gera service graphs;
+- gera span metrics;
+- envia métricas derivadas ao Prometheus;
+- envia exemplars;
+- possui servidor MCP do Tempo habilitado.
+
+
+29. TRACE, SPAN, TRACE ID E SPAN ID
+----------------------------------
+
+TRACE
+
+Representa a operação completa.
+
+SPAN
+
+Representa uma etapa.
+
+TRACE ID
+
+Identifica o trace inteiro.
+
+SPAN ID
+
+Identifica uma etapa específica.
+
+Ao incluir trace_id em logs, torna-se possível sair do log e abrir o trace
+correspondente no Tempo.
+
+
+30. TRACEQL
+-----------
+
+TraceQL é a linguagem de consulta de traces do Tempo.
+
+Os testes atuais usam a API de busca com tag:
+
+    service.name=NOME_DO_SERVICO
+
+No Grafana, TraceQL permite procurar por:
+
+- service.name;
+- status de erro;
+- duração;
+- rota;
+- atributos de spans;
+- relações estruturais.
+
+Exemplo conceitual:
+
+    { resource.service.name = "alumnus_app" && status = error }
+
+Confirme a sintaxe aceita pela versão atual do Tempo antes de usar em automação.
+
+
+31. METRICS GENERATOR DO TEMPO
+------------------------------
+
+Tempo pode derivar métricas a partir dos spans.
+
+O projeto habilita:
+
+- service-graphs;
+- span-metrics;
+- local-blocks;
+- histogramas nativos;
+- remote write para Prometheus;
+- exemplars.
+
+Isso permite visualizar:
+
+- relações entre serviços;
+- taxa de spans;
+- erros;
+- duração;
+- link de uma amostra métrica para um trace.
+
+
+32. GRAFANA
+-----------
+
+Grafana é a camada de visualização, exploração e alerting unificado.
+
+Ele não substitui os backends:
+
+- consulta Prometheus para métricas;
+- consulta Loki para logs;
+- consulta Tempo para traces.
+
+Grafana apresenta tudo em uma interface e cria ligações entre os sinais.
+
+URL local:
+
+    http://localhost:3000
+
+
+33. PROVISIONAMENTO DO GRAFANA
+------------------------------
+
+Provisionamento significa criar configuração por arquivos, de maneira
+reproduzível.
+
+O projeto monta:
+
+- grafana/provisioning/datasources;
+- grafana/provisioning/dashboards;
+- grafana/dashboards;
+- grafana/alerting.
+
+Ao iniciar, o Grafana encontra automaticamente:
+
+- datasource Prometheus;
+- datasource Tempo;
+- datasource Loki;
+- dashboards JSON;
+- regras de alerta do Grafana.
+
+
+34. DATASOURCES
+---------------
+
+Prometheus:
+
+    http://prometheus:9090
+
+Tempo:
+
+    http://tempo:3200
+
+Loki:
+
+    http://loki:3100
+
+Esses nomes funcionam porque os contêineres compartilham a rede criada pelo Docker
+Compose.
+
+Dentro do contêiner, localhost significa o próprio contêiner. Por isso Grafana não
+usa localhost para consultar Prometheus, Loki ou Tempo.
+
+
+35. CORRELAÇÃO CONFIGURADA NO GRAFANA
+--------------------------------------
+
+Tempo -> Logs:
+
+- tracesToLogsV2 aponta para Loki;
+- usa service.name;
+- usa trace ID.
+
+Tempo -> Metrics:
+
+- tracesToMetrics aponta para Prometheus.
+
+Tempo -> Service Map:
+
+- serviceMap usa Prometheus.
+
+Loki -> Tempo:
+
+- derivedFields encontra trace_id;
+- cria link para o datasource Tempo.
+
+Essa configuração permite navegar entre sinais sem copiar IDs manualmente.
+
+
+36. DASHBOARDS DO PROJETO
+-------------------------
+
+Arquivos principais:
+
+    grafana/dashboards/app-metrics.json
+    grafana/dashboards/service-monitoring.json
+
+Application Metrics:
+
+- volume de requisições;
+- métodos;
+- rotas;
+- status HTTP;
+- duração;
+- erros.
+
+Service Monitoring:
+
+- probe_success HTTP;
+- probe_success TCP;
+- probe_success ICMP;
+- duração das probes;
+- saúde geral dos destinos.
+
+
+37. BLACKBOX EXPORTER
+---------------------
+
+Blackbox Exporter observa um serviço de fora.
+
+Ele não pergunta apenas ao processo sobre suas métricas internas. Ele tenta
+realizar uma operação real:
+
+- requisição HTTP;
+- conexão TCP;
+- ICMP ping.
+
+Métrica central:
+
+    probe_success
+
+Valor 1:
+
+    probe funcionou.
+
+Valor 0:
+
+    probe falhou.
+
+
+38. PROBES CONFIGURADAS
+-----------------------
+
+HTTP:
+
+- Grafana /api/health;
+- Prometheus /-/healthy;
+- Loki /ready;
+- Tempo /ready;
+- OpenTelemetry Collector health check.
+
+TCP:
+
+- PostgreSQL em alumnus-postgres:5432.
+
+ICMP:
+
+- PostgreSQL;
+- Grafana;
+- Prometheus;
+- Loki;
+- Tempo;
+- Collector;
+- Blackbox.
+
+O contêiner recebe NET_RAW porque probes ICMP exigem raw socket no Linux.
+
+
+39. O QUE A BLACKBOX PROBE NÃO GARANTE
+--------------------------------------
+
+HTTP 200 não prova que toda regra de negócio funciona.
+
+TCP aberto não prova que uma consulta de banco terá sucesso.
+
+ICMP respondendo não prova que a API está saudável.
+
+Combine:
+
+- health check;
+- métricas da aplicação;
+- logs;
+- traces;
+- teste sintético do comportamento mais importante.
+
+
+40. LACUNA ATUAL: A APP NÃO ESTÁ NA BLACKBOX HTTP
+-------------------------------------------------
+
+O compose de infraestrutura atual monitora os componentes de observabilidade,
+mas prometheus.yaml não inclui:
+
+    http://...:9000/health
+
+na lista blackbox-http.
+
+Isso ocorre porque a aplicação costuma ser executada fora da rede Docker nesse
+snapshot.
+
+Melhoria futura:
+
+- colocar a aplicação no mesmo Compose; ou
+- configurar host.docker.internal de forma portável; ou
+- adicionar uma probe externa autorizada.
+
+
+41. POSTGRESQL
+--------------
+
+Serviço:
+
+    alumnus-postgres
+
+Imagem:
+
+    postgres:16-alpine
+
+Porta interna:
+
+    5432
+
+Porta no host:
+
+    5433
+
+Credenciais padrão do laboratório:
+
+    database: alumnus_app
+    user: alumnus
+    password: alumnus_dev_password
+
+Essas credenciais são apenas para ambiente local de estudo.
+
+
+42. CENÁRIO DB LEAKY CONNECTIONS
+--------------------------------
+
+Arquivo:
+
+    src/scenarios/db-leaky-connections/main.ts
+
+Objetivo:
+
+    simular vazamento de conexões de banco.
+
+Configuração:
+
+- pool PostgreSQL;
+- máximo de duas conexões;
+- timeout para conexão de um segundo;
+- cada requisição chama pool.connect();
+- a conexão obtida não é liberada.
+
+
+43. O BUG PROPOSITAL
+--------------------
+
+Trecho conceitual:
+
+    const client = await pool.connect()
+    const result = await client.query(...)
+    return result
+
+O que falta:
+
+    client.release()
+
+Consequência:
+
+1. primeira requisição pega conexão A;
+2. segunda requisição pega conexão B;
+3. nenhuma é devolvida;
+4. terceira requisição espera;
+5. apó um segundo, o pool gera timeout;
+6. a API retorna HTTP 500;
+7. as seguintes continuam falhando.
+
+
+44. ENDPOINTS DO CENÁRIO
+-------------------------
+
+Gerar a falha:
+
+    GET /students/db-leaky-connections
+
+Resetar conexões vazadas:
+
+    POST /students/db-leaky-connections/reset
+
+Exemplos:
+
+    curl http://localhost:9000/students/db-leaky-connections
+
+    curl -X POST http://localhost:9000/students/db-leaky-connections/reset
+
+O reset é didático. A correção real é liberar cada conexão no fluxo normal.
+
+
+45. CORREÇÃO DO BUG
+----------------------
+
+Padrão correto:
+
+    const client = await pool.connect()
+
+    try {
+      const result = await client.query(
+        'SELECT * FROM students LIMIT 1'
+      )
+
+      return result.rows
+    } finally {
+      client.release()
+    }
+
+O finally executa tanto no sucesso quanto no erro.
+
+Outra opção é usar uma API de pool que execute a consulta sem manter manualmente
+um client quando não há necessidade de transação dedicada.
+
+
+46. INVESTIGAÇÃO PASSO A PASSO
+--------------------------------
+
+1. Métrica
+
+Identificar aumento de respostas 500 e duração próxima de um segundo.
+
+2. Padrão
+
+Observar duas respostas boas seguidas por falhas.
+
+3. Logs
+
+Buscar "Error processing request" e a mensagem de timeout do pg-pool.
+
+4. Trace
+
+Abrir trace da requisição com erro.
+
+5. Spans de banco
+
+Ver onde a espera ocorreu.
+
+6. Código
+
+Conferir pool.connect e ausência de release.
+
+7. Hipótese
+
+O pool de tamanho dois está esgotado.
+
+8. Teste
+
+Resetar e repetir: duas funcionam, terceira falha.
+
+9. Correção
+
+Adicionar finally com client.release().
+
+10. Verificação
+
+Executar várias chamadas e confirmar ausência de timeout e queda dos erros.
+
+
+47. POR QUE UMA MÉTRICA SOZINHA NÃO BASTA
+------------------------------------------
+
+A taxa de 500 mostra o sintoma.
+
+Ela não prova sozinha:
+
+- vazamento de conexão;
+- local exato do código;
+- falta de release;
+- tamanho do pool;
+- stack trace.
+
+Para causa raiz, combine métrica, log, trace, reprodução e inspeção do código.
+
+
+48. TESTES DE TELEMETRIA
+------------------------
+
+Arquivo principal:
+
+    test/db-connections-scenario.test.ts
+
+O teste confirma:
+
+- duas primeiras requisições funcionam;
+- terceira falha;
+- logs aparecem no Loki;
+- traces aparecem no Tempo;
+- métricas aparecem no Prometheus;
+- serviceName identifica o teste.
+
+Isso é importante porque não basta testar a resposta HTTP. A aula também testa
+se a telemetria chegou aos backends.
+
+
+49. POR QUE OS TESTES USAM RETRY
+-------------------------------
+
+Telemetria é assíncrona.
+
+Entre uma requisição e a informação ficar consultável existem:
+
+- intervalo do MetricReader;
+- lote do SDK;
+- exportação do Collector;
+- scrape do Prometheus;
+- indexação do Tempo;
+- ingestão do Loki.
+
+Por isso os testes aguardam e tentam consultar novamente.
+
+Retry deve ter:
+
+- limite;
+- atraso;
+- erro final claro.
+
+
+50. ALERTAS DO PROMETHEUS
+------------------------
+
+O arquivo prometheus/alerts.yaml define, entre outros:
+
+- ServiceDown;
+- DatabaseDown;
+- ServiceUnreachable;
+- ServiceSlowResponse;
+- SSLCertificateExpiringSoon;
+- ServiceHealthCheckFailed;
+- HighMemoryUsage;
+- PrometheusCompactionFailing;
+- NoMetricsScraped;
+- HighScrapeDuration;
+- PostgreSQLDown.
+
+Uma regra possui:
+
+- expr;
+- duração for;
+- labels;
+- annotations.
+
+
+51. ESTADOS DE UMA REGRA DE ALERTA
+---------------------------------
+
+Normal:
+
+    condição não foi atendida.
+
+Pending:
+
+    condição foi atendida, mas ainda não completou o tempo de for.
+
+Firing:
+
+    condição permaneceu verdadeira durante o período exigido.
+
+O campo for reduz alertas por falhas muito curtas.
+
+
+52. ALERTMANAGER NÃO ESTÁ ATIVO NESTE SNAPSHOT
+-----------------------------------------------
+
+prometheus.yaml possui uma lista vazia de destinos de Alertmanager.
+
+Isso significa:
+
+- Prometheus avalia as regras;
+- é possível consultar alertas;
+- não existe, nessa configuração, um Alertmanager recebendo e roteando essas
+  notificações para e-mail, Slack ou outro canal.
+
+Para produção, falta configurar roteamento, agrupamento, silêncio e canais.
+
+
+53. ALERTING DO GRAFANA
+-----------------------
+
+O projeto também provisiona regras no próprio Grafana.
+
+Exemplos:
+
+- HTTP Service Down;
+- Database Connection Failed;
+- Service Network Unreachable;
+- Service Slow Response.
+
+Grafana Alerting pode consultar diferentes datasources e centralizar regras.
+
+Cuidados:
+
+- não duplicar a mesma notificação em Prometheus e Grafana;
+- definir responsável por cada regra;
+- testar NoData e Error;
+- evitar fadiga de alertas;
+- definir canal e escalonamento.
+
+
+54. RED E GOLDEN SIGNALS
+------------------------
+
+RED para serviços:
+
+- Rate: taxa de requisições;
+- Errors: taxa de erros;
+- Duration: duração.
+
+Golden Signals:
+
+- latência;
+- tráfego;
+- erros;
+- saturação.
+
+O cenário de conexões apresenta:
+
+- tráfego gerado a cada dois segundos;
+- erros 500;
+- duração de falha próxima ao timeout;
+- saturação do pool.
+
+
+55. SLI, SLO E SLA
+------------------
+
+SLI:
+
+    indicador medido.
+
+Exemplo:
+
+    proporção de requisições bem-sucedidas.
+
+SLO:
+
+    objetivo interno para o indicador.
+
+Exemplo:
+
+    99,9% das requisições devem funcionar em 30 dias.
+
+SLA:
+
+    compromisso formal com consequências acordadas.
+
+Grafana e Prometheus ajudam a medir SLIs e observar SLOs, mas a definição do
+objetivo depende do produto e do negócio.
+
+
+56. GRAFANA MCP
+---------------
+
+O Compose inicia:
+
+    mcp-grafana
+
+Transporte:
+
+    streamable-http
+
+Porta:
+
+    8000
+
+URL interna do Grafana:
+
+    http://grafana:3000
+
+O MCP permite que um agente consulte ferramentas relacionadas a:
+
+- dashboards;
+- Prometheus;
+- Loki;
+- alertas;
+- outros recursos suportados pelo servidor e permissões.
+
+
+57. EXEMPLO DE PROMPT PARA GRAFANA MCP
+------------------------------------
+
+    Investigue respostas 500 do endpoint
+    /students/db-leaky-connections nos últimos 15 minutos.
+
+    1. Consulte métricas no Prometheus.
+    2. Correlacione logs no Loki.
+    3. Localize traces no Tempo.
+    4. Separe fatos observados de hipóteses.
+    5. Informe consultas, intervalo e limitações.
+    6. Não modifique dashboards, alertas ou datasources.
+
+
+58. TEMPO MCP TAMBÉM ESTÁ HABILITADO
+------------------------------------
+
+tempo-config.yaml possui:
+
+    query_frontend:
+      mcp_server:
+        enabled: true
+
+Isso habilita o MCP próprio do Tempo em sua API compatível.
+
+Portanto, o projeto atual possui duas portas conceituais para agentes:
+
+- mcp-grafana, para a plataforma Grafana;
+- MCP do Tempo, focado em traces e TraceQL.
+
+O acesso deve considerar que traces podem conter dados sensíveis e ser enviados
+ao provedor de modelo utilizado pelo agente.
+
+
+59. MCP NÃO FAZ O DIAGNÓSTICO SER VERDADEIRO AUTOMATICAMENTE
+-----------------------------------------------------------
+
+O agente ainda pode:
+
+- escolher uma query ruim;
+- usar intervalo errado;
+- ignorar um datasource;
+- confundir correlação com causa;
+- interpretar labels incorretamente;
+- inventar uma conclusão.
+
+Peça sempre:
+
+- evidência;
+- consulta usada;
+- janela temporal;
+- serviço;
+- trace ID;
+- separação entre fato e hipótese;
+- próximo teste de confirmação.
+
+
+60. PORTAS DO LABORATÓRIO
+--------------------------
+
+    3000  Grafana
+    3100  Loki
+    3200  Tempo
+    4317  OTLP/gRPC do Collector
+    5433  PostgreSQL no host
+    8000  Grafana MCP
+    8889  métricas exportadas pelo Collector
+    9000  aplicação Alumnus
+    9090  Prometheus
+    9115  Blackbox Exporter
+
+Portas internas adicionais:
+
+    13133 health check do Collector
+    55679 zPages do Collector
+
+
+61. COMO INICIAR A INFRAESTRUTURA ATUAL
+--------------------------------------
+
+Terminal 1:
+
+    cd aula_grafana/alumnus
+    npm run docker:infra:up
+
+Comando equivalente:
+
+    docker compose \
+      -f infra/docker-compose-infra.yaml \
+      up -d --wait
+
+O arquivo passou na validação:
+
+    docker compose -f infra/docker-compose-infra.yaml config --quiet
+
+
+62. COMO INICIAR A APLICAÇÃO
+------------------------------
+
+Terminal 2:
+
+    cd aula_grafana/alumnus
+    npm start
+
+O script entra em _alumnus e executa:
+
+    node --experimental-strip-types src/index.ts
+
+Com os valores padrão, a aplicação usa:
+
+- PostgreSQL em localhost:5433;
+- Collector em localhost:4317;
+- porta 9000;
+- NODE_ENV=production;
+- geração automática de requisições.
+
+
+63. ORDEM DE VERIFICAÇÃO
+--------------------------
+
+1. Contêineres:
+
+    docker compose -f infra/docker-compose-infra.yaml ps
+
+2. App:
+
+    curl http://localhost:9000/health
+
+3. Collector:
+
+    curl http://localhost:8889/metrics
+
+4. Prometheus:
+
+    http://localhost:9090/targets
+
+5. Loki:
+
+    curl http://localhost:3100/ready
+
+6. Tempo:
+
+    curl http://localhost:3200/ready
+
+7. Grafana:
+
+    http://localhost:3000
+
+
+64. COMO GERAR O BUG MANUALMENTE
+--------------------------------
+
+Execute três vezes:
+
+    curl http://localhost:9000/students/db-leaky-connections
+
+Esperado:
+
+- chamada 1: sucesso;
+- chamada 2: sucesso;
+- chamada 3: HTTP 500 apó aproximadamente um segundo.
+
+Porém, em NODE_ENV=production, a própria aplicação já chama esse endpoint a cada
+dois segundos. Ela pode ter esgotado o pool antes do teste manual.
+
+Para reiniciar o cenário:
+
+    curl -X POST \
+      http://localhost:9000/students/db-leaky-connections/reset
+
+
+65. COMO EXPLORAR NO GRAFANA
+----------------------------
+
+Métricas:
+
+1. abra Explore;
+2. selecione Prometheus;
+3. comece com up ou probe_success;
+4. procure métricas HTTP;
+5. filtre pelo serviço e rota;
+6. defina os últimos 15 minutos.
+
+Logs:
+
+1. selecione Loki;
+2. descubra labels;
+3. filtre service_name;
+4. procure erros;
+5. encontre trace_id.
+
+Traces:
+
+1. selecione Tempo;
+2. filtre service.name;
+3. procure status error;
+4. abra spans;
+5. navegue para logs relacionados.
+
+
+66. COMO EXECUTAR OS TESTES
+---------------------------
+
+Com a infraestrutura funcionando:
+
+    cd aula_grafana/alumnus
+    npm test
+
+Os testes criam uma aplicação em porta dinâmica e um serviceName único.
+
+Ao terminar:
+
+- fecham o Fastify;
+- encerram OpenTelemetry;
+- destroem conexões;
+- removem o banco de teste.
+
+
+67. COMO PARAR
+--------------
+
+Parar a infraestrutura:
+
+    cd aula_grafana/alumnus
+    npm run docker:infra:down
+
+Parar a aplicação:
+
+    Ctrl+C no terminal do npm start
+
+
+68. CLEANUP É DESTRUTIVO
+-------------------------
+
+O script:
+
+    npm run docker:infra:cleanup
+
+executa down com volumes e remove infra/storage.
+
+Isso apaga dados locais de:
+
+- PostgreSQL;
+- Grafana;
+- Prometheus;
+- Loki;
+- Tempo.
+
+Use apenas quando quiser reiniciar totalmente o laboratório.
+
+
+69. TROUBLESHOOTING: NÃO HÁ MÉTRICAS
+--------------------------------------
+
+Verifique:
+
+1. app está rodando;
+2. OTEL_EXPORTER_OTLP_ENDPOINT;
+3. porta 4317;
+4. logs do Collector;
+5. endpoint :8889/metrics;
+6. target otel-collector-metrics em Prometheus;
+7. nome real da métrica;
+8. filtro de tempo do Grafana;
+9. filtro de labels do dashboard.
+
+
+70. TROUBLESHOOTING: NÃO HÁ LOGS
+----------------------------------
+
+Verifique:
+
+- OTLPLogExporter;
+- auto-instrumentação do Pino;
+- pipeline logs no Collector;
+- endpoint LOKI_ENDPOINT;
+- saúde do Loki;
+- logs do Collector;
+- label service_name;
+- intervalo temporal;
+- LogQL sem filtro excessivo.
+
+
+71. TROUBLESHOOTING: NÃO HÁ TRACES
+------------------------------------
+
+Verifique:
+
+- OTLPTraceExporter;
+- pipeline traces;
+- endpoint tempo:4317;
+- saúde do Tempo;
+- service.name;
+- atraso de indexação;
+- intervalo temporal;
+- consulta TraceQL ou tags;
+- se a aplicação recebeu requisições.
+
+
+72. TROUBLESHOOTING: DASHBOARD SEM DADOS
+---------------------------------------
+
+O dashboard pode usar nomes de métricas ou labels diferentes dos produzidos pela
+versão atual.
+
+Procedimento:
+
+1. execute uma query ampla no Prometheus;
+2. confirme o nome da métrica;
+3. confira labels;
+4. compare com o JSON do dashboard;
+5. ajuste variáveis env, route e http_method;
+6. confirme o datasource UID prometheus;
+7. salve a correção no arquivo provisionado.
+
+
+73. SEGURANÇA: GRAFANA ANÔNIMO COMO ADMIN
+------------------------------------------
+
+O Compose atual configura:
+
+    GF_AUTH_ANONYMOUS_ENABLED=true
+    GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    GF_AUTH_DISABLE_LOGIN_FORM=true
+
+Isso permite experiência local sem login, mas é extremamente perigoso fora de
+uma máquina de laboratório isolada.
+
+Nunca exponha a porta 3000 dessa configuração na internet ou em rede não
+confiável.
+
+
+74. SEGURANÇA: GRAFANA MCP SEM TOKEN
+-----------------------------------
+
+O contêiner mcp-grafana recebe GRAFANA_URL, mas não recebe service account token.
+
+Ele funciona no laboratório porque Grafana aceita acesso anônimo como Admin.
+
+Para ambiente real:
+
+- desabilite acesso anônimo;
+- crie service account específica;
+- use token de menor privilégio;
+- comece com --disable-write;
+- restrinja consultas;
+- use autenticação no endpoint MCP;
+- use TLS;
+- registre auditoria sem segredos.
+
+
+75. SEGURANÇA: DADOS DE TELEMETRIA
+----------------------------------
+
+Logs e traces podem conter:
+
+- e-mail;
+- ID de usuário;
+- query SQL;
+- parâmetro de URL;
+- cabeçalho;
+- token;
+- corpo de requisição;
+- stack trace;
+- nome interno de serviço.
+
+Antes de enviar telemetria:
+
+- aplique redaction;
+- remova segredos;
+- evite corpo completo;
+- defina retenção;
+- restrinja acesso;
+- classifique dados;
+- cumpra políticas de privacidade.
+
+
+76. SEGURANÇA: ENDPOINTS SEM AUTENTICAÇÃO
+--------------------------------------------
+
+O laboratório publica no host APIs de Grafana, Prometheus, Loki, Tempo, Blackbox,
+MCP, Collector e PostgreSQL.
+
+Várias estão sem autenticação e TLS.
+
+Use somente em:
+
+- localhost;
+- rede confiável;
+- máquina de estudo;
+- sem port forwarding público.
+
+
+77. SEGURANÇA: IMAGENS E VERSÕES
+---------------------------------
+
+Pontos positivos:
+
+- várias imagens possuem versão;
+- mcp-grafana está fixado por digest;
+- PostgreSQL, Collector, Grafana, Prometheus, Loki e Blackbox usam tags.
+
+Pontos de atenção:
+
+- Tempo usa uma tag baseada em main/commit, não uma release clara;
+- plugin do Grafana usa arquivo latest;
+- dependências npm usam intervalos com ^;
+- lockfiles são ignorados pela regra global deste repositório.
+
+Para reprodutibilidade:
+
+- fixe releases testadas;
+- versiona lockfile apropriado;
+- revise imagens;
+- use digest onde fizer sentido;
+- atualize conscientemente.
+
+
+78. DIFERENÇAS ENTRE README E SNAPSHOT ATUAL
+--------------------------------------------
+
+O README descreve arquivos e comandos que não correspondem totalmente ao estado
+atual desta pasta.
+
+Exemplos:
+
+- menciona docker-compose.yaml principal, mas ele não existe neste snapshot;
+- menciona pnpm em alguns trechos, mas package.json usa npm;
+- a estrutura descrita no README possui nomes antigos;
+- docker-compose-test.yaml inclui um nome aparentemente digitado como
+  docker-compos.yaml;
+- docker-compose-test.yaml usa pnpm no contêiner, enquanto o package atual usa npm;
+- README lista alguns alertas e limites diferentes dos arquivos atuais.
+
+Para esta aula, a fonte de verdade usada foi:
+
+1. arquivos atuais;
+2. package.json atual;
+3. compose atual validado;
+4. código TypeScript atual;
+5. README apenas como contexto adicional.
+
+
+79. FLUXO CONFIÁVEL PARA O SNAPSHOT ATUAL
+-----------------------------------------
+
+Use:
+
+    cd aula_grafana/alumnus
+    npm run docker:infra:up
+
+Depois, em outro terminal:
+
+    cd aula_grafana/alumnus
+    npm start
+
+Essa separação corresponde aos arquivos existentes:
+
+- infraestrutura no Docker;
+- aplicação no host.
+
+
+80. MELHORIAS PARA UM AMBIENTE MAIS PROFISSIONAL
+------------------------------------------------
+
+- corrigir README e compose de testes;
+- criar Compose principal incluindo aplicação;
+- adicionar app ao Blackbox Exporter;
+- proteger todos os endpoints;
+- desabilitar anonymous Admin;
+- configurar service account no MCP;
+- habilitar --disable-write no Grafana MCP;
+- usar TLS;
+- adicionar Alertmanager;
+- configurar canais de notificação;
+- definir retenção por backend;
+- adicionar memory_limiter ao Collector;
+- configurar fila persistente quando necessário;
+- aplicar sampling consciente;
+- aplicar redaction;
+- criar SLOs;
+- controlar cardinalidade;
+- versionar lockfiles;
+- fixar versões de imagens e plugins;
+- adicionar backup;
+- documentar runbooks.
+
+
+81. RUNBOOK
+-----------
+
+Runbook é um procedimento operacional para responder a um alerta.
+
+Exemplo para DatabaseDown:
+
+1. confirme probe_success;
+2. verifique contêiner PostgreSQL;
+3. teste porta 5432 na rede Docker;
+4. confira healthcheck;
+5. consulte logs do PostgreSQL;
+6. verifique disco;
+7. confirme credenciais;
+8. avalie conexões;
+9. registre a causa;
+10. confirme recuperação.
+
+Um alerta sem ação clara produz barulho, não confiabilidade.
+
+
+82. CHECKLIST PARA INICIAR A AULA
+--------------------------------
+
+[ ] Docker está instalado?
+[ ] Docker Compose está disponível?
+[ ] Node 22 ou superior está disponível?
+[ ] Portas estão livres?
+[ ] O compose validou?
+[ ] A infraestrutura ficou healthy?
+[ ] A app respondeu em /health?
+[ ] O Collector recebeu sinais?
+[ ] Prometheus possui targets UP?
+[ ] Loki está ready?
+[ ] Tempo está ready?
+[ ] Grafana abriu?
+[ ] Datasources estão configurados?
+[ ] O ambiente está isolado e local?
+
+
+83. CHECKLIST DA INVESTIGAÇÃO
+--------------------------------
+
+[ ] Qual foi a janela temporal?
+[ ] Qual serviço?
+[ ] Qual rota?
+[ ] A taxa de erro aumentou?
+[ ] A latência aumentou?
+[ ] Existe padrão repetível?
+[ ] Qual log corresponde ao erro?
+[ ] Existe trace_id?
+[ ] Qual span falhou?
+[ ] Qual dependência está envolvida?
+[ ] O Blackbox mostra indisponibilidade externa?
+[ ] A infraestrutura está UP?
+[ ] A hipótese foi reproduzida?
+[ ] A correção foi verificada?
+[ ] O dashboard e alerta foram ajustados se necessário?
+
+
+84. CHECKLIST DE PRODUÇÃO
+---------------------------
+
+[ ] Anonymous Admin foi desabilitado?
+[ ] Senhas padrão foram removidas?
+[ ] TLS está ativo?
+[ ] Endpoints não estão publicamente expostos?
+[ ] Service accounts possuem menor privilégio?
+[ ] Grafana MCP está read-only?
+[ ] Logs e traces passaram por redaction?
+[ ] Retenção foi definida?
+[ ] Cardinalidade foi analisada?
+[ ] Alertmanager e canais foram configurados?
+[ ] Regras possuem runbooks?
+[ ] Backups foram configurados?
+[ ] Collector possui proteção contra memória excessiva?
+[ ] Imagens e dependências estão fixadas?
+[ ] A stack possui observabilidade própria?
+
+
+85. PERGUNTAS PARA REVISÃO
+--------------------------
+
+1. Qual é a diferença entre monitoramento e observabilidade?
+2. Quais são os três sinais usados nesta aula?
+3. Qual é o papel do OpenTelemetry?
+4. O que significa OTLP?
+5. Qual é o papel do Collector?
+6. O que são receiver, processor e exporter?
+7. Para onde cada sinal é enviado?
+8. Qual é o papel do Prometheus?
+9. Qual é o papel do Loki?
+10. Qual é o papel do Tempo?
+11. Qual é o papel do Grafana?
+12. O que o Blackbox Exporter mede?
+13. Por que a terceira requisição do cenário falha?
+14. Como corrigir a conexão vazada?
+15. Por que os testes precisam esperar a telemetria?
+16. Como navegar de log para trace?
+17. O que é um exemplar?
+18. O Alertmanager está configurado?
+19. Por que anonymous Admin é perigoso?
+20. Como o Grafana MCP ajuda na investigação?
+
+
+86. RESPOSTAS RÁPIDAS
+---------------------
+
+OpenTelemetry:
+
+    gera, coleta e padroniza telemetria; não é o dashboard.
+
+Collector:
+
+    recebe, processa e distribui sinais.
+
+Prometheus:
+
+    armazena e consulta métricas, além de avaliar regras.
+
+Loki:
+
+    armazena e consulta logs.
+
+Tempo:
+
+    armazena e consulta traces.
+
+Grafana:
+
+    visualiza, explora, correlaciona e alerta.
+
+Blackbox:
+
+    testa a saúde a partir de fora do serviço.
+
+Grafana MCP:
+
+    oferece ferramentas de observabilidade a um agente de IA.
+
+
+87. RESUMO DIDÁTICO
+--------------------
+
+A aplicação é instrumentada pelo OpenTelemetry e envia métricas, logs e traces
+ao Collector. O Collector encaminha traces para Tempo, logs para Loki e expõe
+métricas para Prometheus. Grafana consulta os três backends e correlaciona os
+sinais. Blackbox Exporter testa se componentes respondem. Alertas detectam
+condições ruins. O Grafana MCP permite investigar esses dados com um agente.
+
+O cenário didático vaza duas conexões de banco e faz as chamadas seguintes
+falharem. A stack mostra o sintoma nas métricas, a mensagem nos logs e o caminho
+nos traces, permitindo chegar à falta de client.release().
+
+
+88. RESUMO EXTREMAMENTE CURTO
+----------------------------
+
+OpenTelemetry coleta os sinais; Prometheus guarda métricas, Loki guarda logs,
+Tempo guarda traces e Grafana mostra tudo para entender a saúde do sistema.
+
+
+89. FRASE CENTRAL DA AULA
+------------------------
+
+"Um dashboard mostra que algo mudou; observabilidade correlaciona métricas, logs
+e traces para explicar onde, quando e por que o sistema se comportou daquela
+forma."
+
+
+90. FONTES DO PRÓPRIO PROJETO
+-----------------------------
+
+README principal:
+
+    aula_grafana/alumnus/README.md
+
+Infraestrutura:
+
+    aula_grafana/alumnus/infra/docker-compose-infra.yaml
+
+OpenTelemetry da aplicação:
+
+    aula_grafana/alumnus/_alumnus/src/monitoring/otel.ts
+
+Cenário de vazamento:
+
+    aula_grafana/alumnus/_alumnus/src/scenarios/db-leaky-connections/main.ts
+
+Collector:
+
+    aula_grafana/alumnus/infra/otel-collector/otel-collector-config.yaml
+
+Prometheus:
+
+    aula_grafana/alumnus/infra/prometheus/prometheus.yaml
+    aula_grafana/alumnus/infra/prometheus/alerts.yaml
+
+Grafana:
+
+    aula_grafana/alumnus/infra/grafana/
+
+Loki:
+
+    aula_grafana/alumnus/infra/loki/loki-config.yaml
+
+Tempo:
+
+    aula_grafana/alumnus/infra/tempo/tempo-config.yaml
+
+Testes:
+
+    aula_grafana/alumnus/_alumnus/test/db-connections-scenario.test.ts
+
+
+91. FONTES OFICIAIS PARA CONSULTA FUTURA
+---------------------------------------
+
+OpenTelemetry — sinais:
+
+    https://opentelemetry.io/docs/concepts/signals/
+
+OpenTelemetry Collector:
+
+    https://opentelemetry.io/docs/collector/
+    https://opentelemetry.io/docs/collector/architecture/
+
+OpenTelemetry JavaScript:
+
+    https://opentelemetry.io/docs/languages/js/
+
+Prometheus:
+
+    https://prometheus.io/docs/introduction/overview/
+
+PromQL:
+
+    https://prometheus.io/docs/prometheus/latest/querying/basics/
+
+Grafana:
+
+    https://grafana.com/docs/grafana/latest/
+
+Grafana Alerting:
+
+    https://grafana.com/docs/grafana/latest/alerting/
+
+Loki:
+
+    https://grafana.com/docs/loki/latest/get-started/
+
+LogQL:
+
+    https://grafana.com/docs/loki/latest/query/
+
+Tempo:
+
+    https://grafana.com/docs/tempo/latest/
+
+Blackbox Exporter:
+
+    https://github.com/prometheus/blackbox_exporter
+
+Grafana MCP:
+
+    https://github.com/grafana/mcp-grafana
+
+
+FIM DA REFERÊNCIA DA AULA GRAFANA
+==================================
