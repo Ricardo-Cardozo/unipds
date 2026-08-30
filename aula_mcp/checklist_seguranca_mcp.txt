@@ -1,0 +1,146 @@
+CHECKLIST DE SEGURANÇA PARA MCP
+===============================
+
+Use esta lista antes de habilitar um servidor MCP em projeto real.
+
+
+ORIGEM
+------
+
+[ ] O servidor veio do repositório oficial?
+[ ] A organização publicadora foi confirmada?
+[ ] O nome do pacote corresponde ao repositório?
+[ ] A licença permite o uso pretendido?
+[ ] A política de segurança foi lida?
+[ ] Issues e releases recentes foram revisadas?
+[ ] A versão está fixada?
+[ ] Existe procedimento de atualização e rollback?
+
+
+EXECUÇÃO
+--------
+
+[ ] O servidor será local ou remoto?
+[ ] Um servidor local realmente precisa das permissões do usuário?
+[ ] O processo está isolado quando possível?
+[ ] O filesystem acessível está limitado?
+[ ] A rede acessível está limitada?
+[ ] O pacote foi testado sem @latest?
+[ ] Logs stdio vão para stderr?
+
+
+TOOLS
+-----
+
+[ ] Todas as tools foram listadas?
+[ ] Tools de escrita foram identificadas?
+[ ] Tools destrutivas estão desabilitadas?
+[ ] Schemas rejeitam propriedades inesperadas?
+[ ] Entradas possuem limites?
+[ ] Saídas possuem limites?
+[ ] Timeouts foram definidos?
+[ ] Retries possuem limite?
+[ ] Ações externas exigem confirmação?
+[ ] Efeitos e possibilidade de reversão estão documentados?
+
+
+CREDENCIAIS
+-----------
+
+[ ] Existe identidade exclusiva para a integração?
+[ ] O token tem menor privilégio?
+[ ] O token tem validade adequada?
+[ ] O token pode ser revogado?
+[ ] O token não está no Git?
+[ ] O token não aparece no prompt?
+[ ] O token não aparece em logs?
+[ ] A rotação foi planejada?
+[ ] Tokens HTTP são validados para o público correto?
+
+
+DADOS
+-----
+
+[ ] O MCP pode acessar dados pessoais?
+[ ] O MCP pode acessar segredos em logs?
+[ ] O resultado pode sair do ambiente?
+[ ] A retenção do servidor remoto foi entendida?
+[ ] O modelo recebe apenas os campos necessários?
+[ ] Resultados são tratados como conteúdo não confiável?
+[ ] Existe defesa contra prompt injection?
+[ ] A origem da evidência é preservada?
+
+
+REDE
+----
+
+[ ] Streamable HTTP usa TLS?
+[ ] O endpoint exige autenticação?
+[ ] As origens são validadas?
+[ ] O bind de rede é restrito?
+[ ] Existe rate limit?
+[ ] Existe limite de corpo e resposta?
+[ ] Redirecionamentos e destinos são controlados?
+[ ] O servidor não está exposto publicamente por acidente?
+
+
+OPERAÇÃO
+---------
+
+[ ] Existe ambiente de teste?
+[ ] O MCP Inspector foi utilizado?
+[ ] Falhas de permissão foram testadas?
+[ ] Timeouts foram testados?
+[ ] Respostas grandes foram testadas?
+[ ] A versão do server aparece na telemetria?
+[ ] Tool calls são auditadas sem segredos?
+[ ] Latência e taxa de erro são monitoradas?
+[ ] Custos de consultas são monitorados?
+[ ] Existe responsável pelo servidor?
+
+
+CONTEXT7
+--------
+
+[ ] O ID da biblioteca foi conferido?
+[ ] A versão instalada foi conferida?
+[ ] A fonte é confiável?
+[ ] O código sugerido foi testado?
+[ ] O resultado não foi tratado como garantia absoluta?
+
+
+PLAYWRIGHT MCP
+--------------
+
+[ ] O perfil é isolado?
+[ ] A conta é de teste?
+[ ] O domínio é permitido?
+[ ] Formulários de escrita exigem confirmação?
+[ ] Downloads e uploads estão controlados?
+[ ] Cookies e storage estão protegidos?
+[ ] O servidor não foi tratado como sandbox?
+
+
+GRAFANA MCP
+-----------
+
+[ ] A service account é exclusiva?
+[ ] RBAC está restrito?
+[ ] --disable-write está ativo?
+[ ] --disable-query foi considerado?
+[ ] O intervalo temporal está limitado?
+[ ] O volume de logs está limitado?
+[ ] SQL bruto está desabilitado?
+[ ] Segredos em logs foram considerados?
+[ ] Mudanças exigem aprovação?
+
+
+REGRA FINAL
+-----------
+
+Se você não entende exatamente o que um servidor pode ler, enviar ou modificar,
+não o habilite com dados ou credenciais reais.
+
+
+FIM DO CHECKLIST
+================
