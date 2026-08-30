@@ -1,0 +1,1960 @@
+AULA EXTRA — OLLAMA, MODELOS LOCAIS E IA NO EDITOR DE CÓDIGO
+================================================================
+
+Referência completa sobre execução local de modelos de linguagem, diferenças
+entre modelos alinhados e modelos chamados de "sem censura", uso da API do
+Ollama e integração com VS Code, GitHub Copilot CLI, Claude Code e Codex.
+
+Data da pesquisa e da análise: 30/08/2026
+
+
+OBJETIVOS DA AULA
+-----------------
+
+Ao terminar esta aula, devemos entender:
+
+- o que é o Ollama;
+- o que significa executar uma IA localmente;
+- a diferença entre modelo, servidor de inferência e aplicativo cliente;
+- o que o mercado chama informalmente de modelo "com censura" e "sem censura";
+- por que os termos alinhado, protegido e com menos recusas são mais precisos;
+- por que um modelo com menos recusas não é necessariamente melhor;
+- como baixar, listar, executar e remover modelos;
+- como conversar com o Ollama pelo terminal;
+- como utilizar a API nativa do Ollama;
+- como utilizar endpoints compatíveis com OpenAI e Anthropic;
+- o que é streaming;
+- como escolher um modelo compatível com o computador;
+- como usar modelos locais no VS Code;
+- como usar Ollama com Copilot CLI, Claude Code e Codex;
+- por que um agente de programação exige mais do modelo do que um chat simples;
+- como manter aprovações, sandbox, validação e segurança;
+- como diagnosticar lentidão, falta de memória e falhas de integração.
+
+
+RESPOSTA CURTA SOBRE A AULA
+---------------------------
+
+O Ollama transforma o computador em um servidor local de Inteligência
+Artificial. Ele baixa os pesos de um modelo, carrega o modelo na RAM ou VRAM,
+executa a inferência e oferece uma API em:
+
+    http://localhost:11434
+
+Outros programas podem enviar prompts para esse endereço. Isso permite usar o
+mesmo modelo no terminal, em uma aplicação própria ou dentro de ferramentas de
+programação.
+
+Arquitetura resumida:
+
+    Usuário
+       |
+       v
+    VS Code / Claude Code / Codex / Copilot CLI / aplicação própria
+       |
+       v
+    API local do Ollama em localhost:11434
+       |
+       v
+    Modelo carregado na RAM e, quando possível, na GPU
+       |
+       v
+    Resposta devolvida ao programa cliente
+
+
+1. O QUE É O OLLAMA
+---------------------
+
+O Ollama é um runtime e servidor de inferência para modelos de IA.
+
+Ele resolve várias partes do processo:
+
+- faz download dos modelos;
+- organiza os arquivos dos modelos;
+- carrega os pesos na memória;
+- utiliza CPU e aceleração de GPU quando compatível;
+- aplica o template correto de conversa;
+- tokeniza o texto;
+- executa a inferência;
+- controla contexto e parâmetros de geração;
+- transmite a resposta em streaming;
+- disponibiliza API HTTP;
+- oferece compatibilidade parcial com APIs conhecidas;
+- conecta modelos a outras ferramentas.
+
+O Ollama não é o modelo.
+
+Uma analogia:
+
+    Modelo       = o conhecimento e o comportamento aprendidos.
+    Ollama       = o motor que carrega e executa o modelo.
+    VS Code      = o ambiente onde a pessoa trabalha.
+    Codex/Claude = o agente que entende ferramentas e organiza o trabalho.
+    GPU/CPU      = o hardware que realiza os cálculos.
+
+
+2. O QUE SIGNIFICA RODAR LOCALMENTE
+-----------------------------------
+
+Em uma execução realmente local:
+
+- os pesos do modelo estão armazenados no computador;
+- a inferência acontece no computador;
+- CPU, RAM, GPU e VRAM do computador fazem o trabalho;
+- o prompt pode permanecer na máquina;
+- a resposta é produzida sem chamar uma API remota de inferência.
+
+Isso é diferente de usar um modelo em nuvem por meio do Ollama.
+
+Exemplo local:
+
+    ollama run gpt-oss:20b
+
+Exemplo de um modelo identificado como cloud:
+
+    ollama run gpt-oss:120b-cloud
+
+O segundo usa a interface do Ollama, mas o processamento não é local.
+
+Portanto:
+
+    usar o programa Ollama != garantir que toda inferência seja local
+
+Sempre verifique o nome do modelo e a configuração utilizada.
+
+
+3. VANTAGENS DE MODELOS LOCAIS
+------------------------------
+
+- maior controle sobre a infraestrutura;
+- possibilidade de trabalhar sem Internet;
+- privacidade para código e documentos sensíveis;
+- ausência de custo por token de uma API externa;
+- latência previsível quando o hardware é suficiente;
+- liberdade para escolher modelos e quantizações;
+- possibilidade de personalizar templates e parâmetros;
+- integração com sistemas internos;
+- facilidade para experimentar modelos open-weight;
+- controle sobre atualizações e versões.
+
+
+4. LIMITAÇÕES DE MODELOS LOCAIS
+---------------------------------
+
+- modelos grandes exigem muita RAM ou VRAM;
+- a resposta pode ser lenta na CPU;
+- contextos longos consomem muito mais memória;
+- modelos menores podem raciocinar e programar pior;
+- a qualidade pode ficar abaixo dos melhores modelos em nuvem;
+- instalação de drivers pode ser trabalhosa;
+- o usuário cuida de atualizações e segurança;
+- concorrência entre vários usuários exige mais hardware;
+- integrações agentes exigem tool calling e formato correto;
+- não existe garantia de que todo modelo funcionará em todo agente;
+- um endpoint local exposto incorretamente pode dar acesso a terceiros.
+
+
+5. PESOS ABERTOS NÃO SÃO A MESMA COISA QUE CÓDIGO ABERTO
+------------------------------------------------------------
+
+O termo open-weight indica que os pesos do modelo podem ser obtidos e
+executados. Isso não garante que sejam publicados:
+
+- todos os dados de treinamento;
+- todo o código de treinamento;
+- o processo completo de curadoria;
+- todas as avaliações internas.
+
+Também é obrigatório conferir a licença de cada modelo.
+
+Uma licença pode permitir estudo e proibir certos usos comerciais. Outra pode
+ser permissiva. O fato de um arquivo poder ser baixado não elimina suas regras.
+
+
+6. TIPOS DE MODELO
+------------------
+
+Modelo base:
+
+- treinado principalmente para prever o próximo token;
+- não necessariamente sabe conversar ou obedecer bem;
+- costuma ser ponto de partida para especialização.
+
+Modelo instruct ou chat:
+
+- ajustado para seguir instruções;
+- entende papéis como system, user e assistant;
+- normalmente passou por treinamento de preferências;
+- pode incluir treinamento de segurança.
+
+Modelo de código:
+
+- ajustado para compreender e gerar programas;
+- pode ter melhor desempenho com repositórios e ferramentas;
+- ainda precisa suportar tool calling para ser um bom agente.
+
+Modelo de embeddings:
+
+- transforma texto em vetores;
+- serve para busca semântica e RAG;
+- não é utilizado como chat convencional.
+
+Modelo multimodal:
+
+- recebe mais de uma modalidade, como texto e imagem;
+- precisa declarar suporte a essas entradas.
+
+
+7. "COM CENSURA" E "SEM CENSURA"
+---------------------------------
+
+Esses nomes são populares, mas simplificam demais o assunto.
+
+Em termos técnicos, é melhor falar em:
+
+- modelo alinhado a determinadas políticas;
+- modelo treinado com salvaguardas;
+- modelo com comportamento de recusa;
+- modelo com menos recusas;
+- modelo cujo treinamento de segurança foi reduzido ou removido;
+- modelo base sem ajuste específico para assistente.
+
+"Censura" pode dar a impressão de que existe apenas um filtro depois da
+resposta. Na prática, o comportamento pode estar em várias camadas:
+
+1. nos pesos, por treinamento ou fine-tuning;
+2. no template e no system prompt;
+3. em um classificador de entrada;
+4. em um classificador de saída;
+5. no aplicativo que consome o modelo;
+6. nas permissões das ferramentas;
+7. em regras organizacionais e legais.
+
+
+8. O QUE É ALINHAMENTO
+-----------------------
+
+Alinhamento é o processo de aproximar o comportamento do modelo das intenções,
+preferências e regras definidas por pessoas ou organizações.
+
+Técnicas conhecidas incluem:
+
+- supervised fine-tuning;
+- reinforcement learning from human feedback, ou RLHF;
+- direct preference optimization, ou DPO;
+- reinforcement learning from AI feedback, ou RLAIF;
+- Constitutional AI;
+- fine-tuning de segurança;
+- red teaming e avaliações de comportamento.
+
+O alinhamento pode buscar:
+
+- seguir instruções com mais precisão;
+- reduzir conteúdo perigoso;
+- admitir incerteza;
+- evitar facilitar abuso;
+- proteger privacidade;
+- manter um formato de resposta;
+- respeitar uma política de uso.
+
+
+9. MODELO SEM CENSURA NÃO SIGNIFICA MODELO MELHOR
+-------------------------------------------------
+
+Um modelo com menos recusas pode responder a mais perguntas, mas isso não
+significa que a resposta será:
+
+- verdadeira;
+- atualizada;
+- segura;
+- legal;
+- ética;
+- tecnicamente correta;
+- apropriada para ser executada.
+
+Ele pode responder com muita confiança e pouca qualidade.
+
+A diferença central é:
+
+    disposição para responder != capacidade de responder corretamente
+
+
+10. MODELO ALINHADO TAMBÉM NÃO É AUTOMATICAMENTE CORRETO
+----------------------------------------------------------
+
+Um modelo protegido pode recusar algo perigoso e ainda:
+
+- alucinar fatos em assuntos permitidos;
+- criar código com bugs;
+- interpretar incorretamente o contexto;
+- usar uma API antiga;
+- produzir falso positivo em uma recusa;
+- recusar um pedido legítimo.
+
+Segurança, conhecimento e inteligência são dimensões diferentes.
+
+
+11. O EXPERIMENTO DA AULA
+-------------------------
+
+O arquivo estudado é:
+
+    aula_ollama/request.sh
+
+Ele compara:
+
+    llama2-uncensored:7b
+
+com:
+
+    gpt-oss:20b
+
+O mesmo pedido sobre criação de trapaça em jogo foi enviado aos dois modelos.
+
+O primeiro respondeu. O segundo recusou.
+
+O objetivo didático é observar que modelos diferentes possuem comportamentos e
+políticas diferentes mesmo quando executados pelo mesmo Ollama.
+
+O Ollama não decide sozinho se o pedido será recusado. Grande parte desse
+comportamento pertence ao modelo e ao seu treinamento.
+
+
+12. A RESPOSTA "SEM CENSURA" MOSTRA UMA ALUCINAÇÃO
+----------------------------------------------------
+
+A resposta registrada no `request.sh` mistura Counter-Strike 1.6 com CS:GO,
+cita recursos sem demonstrar que existem e fornece instruções genéricas que não
+explicam tecnicamente a implementação.
+
+Isso é uma lição valiosa:
+
+- o modelo respondeu sem recusar;
+- a resposta parece confiante;
+- a resposta não comprova exatidão;
+- remover recusa não remove alucinação;
+- menos proteção não produz automaticamente mais conhecimento.
+
+
+13. SOBRE OS MODELOS UTILIZADOS
+-------------------------------
+
+Segundo a biblioteca oficial do Ollama consultada nesta aula:
+
+llama2-uncensored:7b:
+
+- modelo Llama 2 ajustado por terceiros;
+- aproximadamente 3,8 GB na variante principal;
+- janela de contexto de aproximadamente 2 mil tokens;
+- modelo antigo comparado aos modelos atuais;
+- contexto pequeno demais para repositórios grandes;
+- pode servir para demonstrar diferenças de recusa;
+- não é uma boa escolha atual para agente de programação complexo.
+
+gpt-oss:20b no Ollama:
+
+- modelo open-weight da OpenAI;
+- aproximadamente 14 GB na distribuição MXFP4;
+- cerca de 20,9 bilhões de parâmetros, com arquitetura MoE;
+- janela máxima declarada de 128 mil tokens;
+- suporte a raciocínio e tarefas agentes;
+- licença Apache 2.0;
+- requer muito mais memória do que o modelo de 7B.
+
+
+14. ANÁLISE LINHA A LINHA DO REQUEST.SH
+---------------------------------------
+
+Listar modelos baixados:
+
+    ollama list
+
+Baixar o modelo com menos recusas:
+
+    ollama pull llama2-uncensored:7b
+
+Baixar o gpt-oss:
+
+    ollama pull gpt-oss:20b
+
+Chamar endpoint compatível com OpenAI:
+
+    POST http://localhost:11434/v1/chat/completions
+
+O corpo utiliza uma lista de mensagens:
+
+    {
+      "model": "llama2-uncensored:7b",
+      "messages": [
+        {
+          "role": "user",
+          "content": "..."
+        }
+      ]
+    }
+
+O `jq` formata o JSON devolvido:
+
+    | jq
+
+Depois, o script usa a API nativa:
+
+    POST http://localhost:11434/api/generate
+
+Nessa chamada, o texto vai no campo `prompt`.
+
+
+15. API NATIVA E API COMPATÍVEL
+-------------------------------
+
+API nativa do Ollama:
+
+    http://localhost:11434/api
+
+Endpoints comuns:
+
+    POST /api/generate
+    POST /api/chat
+    POST /api/embed
+    GET  /api/tags
+    GET  /api/ps
+    POST /api/pull
+    DELETE /api/delete
+
+Compatibilidade com OpenAI:
+
+    http://localhost:11434/v1/chat/completions
+    http://localhost:11434/v1/responses
+
+Compatibilidade com Anthropic:
+
+    http://localhost:11434/v1/messages
+
+A compatibilidade facilita apontar programas existentes para o Ollama.
+
+Ela é parcial. Um programa pode depender de campos, ferramentas ou eventos que
+um modelo ou endpoint local não implemente completamente.
+
+
+16. GENERATE E CHAT
+-------------------
+
+`/api/generate` trabalha principalmente com um prompt textual:
+
+    curl http://localhost:11434/api/generate \
+      -d '{
+        "model": "gpt-oss:20b",
+        "prompt": "Explique recursão",
+        "stream": false
+      }'
+
+`/api/chat` trabalha com mensagens e papéis:
+
+    curl http://localhost:11434/api/chat \
+      -d '{
+        "model": "gpt-oss:20b",
+        "messages": [
+          {"role": "system", "content": "Seja didático."},
+          {"role": "user", "content": "Explique recursão."}
+        ],
+        "stream": false
+      }'
+
+Para conversas, `/api/chat` costuma representar melhor o histórico.
+
+
+17. O QUE É STREAMING
+----------------------
+
+Com:
+
+    "stream": true
+
+o servidor envia partes da resposta conforme os tokens são gerados.
+
+Vantagens:
+
+- o usuário começa a ler antes do fim;
+- melhora a sensação de velocidade;
+- permite atualizar a interface gradualmente.
+
+Com:
+
+    "stream": false
+
+o programa espera a geração terminar e recebe um JSON completo.
+
+`stream: false` é mais simples para scripts e testes. Streaming é melhor para
+interfaces interativas.
+
+
+18. INSTALAÇÃO NO LINUX
+-------------------------
+
+Comando documentado oficialmente:
+
+    curl -fsSL https://ollama.com/install.sh | sh
+
+Depois:
+
+    ollama --version
+
+Verificar o serviço:
+
+    systemctl status ollama
+
+Iniciar manualmente, quando necessário:
+
+    ollama serve
+
+A API deve responder em:
+
+    curl http://localhost:11434/api/version
+
+Observação de segurança:
+
+Antes de executar qualquer instalador recebido por pipe, consulte a fonte,
+confirme o domínio e avalie o script de acordo com a política da máquina.
+
+
+19. COMANDOS ESSENCIAIS
+-----------------------
+
+Ver ajuda:
+
+    ollama --help
+
+Listar modelos:
+
+    ollama list
+
+Baixar um modelo:
+
+    ollama pull NOME:TAG
+
+Executar conversa:
+
+    ollama run NOME:TAG
+
+Ver modelos carregados:
+
+    ollama ps
+
+Parar e descarregar um modelo:
+
+    ollama stop NOME:TAG
+
+Remover os arquivos de um modelo:
+
+    ollama rm NOME:TAG
+
+Ver informações:
+
+    ollama show NOME:TAG
+
+Ver o Modelfile:
+
+    ollama show --modelfile NOME:TAG
+
+
+20. TAGS IMPORTAM
+-----------------
+
+O nome depois dos dois-pontos seleciona uma variante:
+
+    modelo:7b
+    modelo:70b
+    modelo:q4_K_M
+    modelo:latest
+
+Tags podem representar:
+
+- quantidade de parâmetros;
+- quantização;
+- versão;
+- contexto;
+- especialização;
+- execução local ou cloud.
+
+Usar `latest` é prático para estudo, mas fixar uma tag específica melhora a
+reprodutibilidade de um projeto.
+
+
+21. PARÂMETROS E QUANTIZAÇÃO
+------------------------------
+
+Um modelo 7B possui aproximadamente sete bilhões de parâmetros. Um 20B possui
+aproximadamente vinte bilhões, embora arquiteturas MoE ativem apenas parte deles
+por token.
+
+Quantização reduz a precisão numérica dos pesos para economizar memória.
+
+Exemplos comuns:
+
+- FP16: maior consumo;
+- Q8: menor consumo, pequena perda;
+- Q6 ou Q5: compromisso intermediário;
+- Q4: muito utilizado localmente;
+- Q2 ou Q3: mais compacto, com maior risco de perda de qualidade.
+
+Um arquivo menor pode caber na GPU, mas tamanho em disco não é toda a memória
+necessária. Também existem:
+
+- KV cache;
+- contexto;
+- buffers;
+- runtime;
+- memória do sistema;
+- processamento paralelo.
+
+
+22. CONTEXTO
+------------
+
+Contexto é a quantidade de tokens que o modelo consegue considerar durante uma
+requisição.
+
+O contexto pode conter:
+
+- pergunta atual;
+- histórico;
+- system prompt;
+- arquivos do projeto;
+- respostas de ferramentas;
+- plano do agente;
+- patches e logs.
+
+Para agentes de programação, a documentação atual do Ollama recomenda pelo
+menos 64 mil tokens.
+
+Configuração temporária:
+
+    OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+
+Quanto maior o contexto:
+
+- maior o consumo de memória;
+- maior o tempo de processamento;
+- maior a quantidade de projeto que pode ser analisada;
+- maior o risco de não caber no hardware.
+
+
+23. TEMPERATURA, TOP_P E SEED
+----------------------------
+
+Temperatura:
+
+- menor: respostas mais previsíveis;
+- maior: respostas mais variadas;
+- não transforma conhecimento errado em conhecimento certo.
+
+Top P e Top K:
+
+- limitam quais tokens participam da amostragem;
+- controlam diversidade;
+- precisam ser avaliados junto da temperatura.
+
+Seed:
+
+- ajuda a repetir uma geração;
+- não garante reprodutibilidade absoluta entre hardware e versões diferentes.
+
+Para código, costuma ser útil começar com temperatura baixa.
+
+
+24. MODELFILE
+-------------
+
+O Modelfile é um projeto de configuração de modelo no Ollama.
+
+Exemplo didático:
+
+    FROM gpt-oss:20b
+    PARAMETER temperature 0.2
+    PARAMETER num_ctx 8192
+    SYSTEM """
+    Você é um tutor de programação.
+    Explique antes de alterar código.
+    Não invente APIs.
+    """
+
+Criar:
+
+    ollama create tutor-local -f Modelfile
+
+Executar:
+
+    ollama run tutor-local
+
+O Modelfile pode configurar:
+
+- modelo de origem;
+- parâmetros;
+- template;
+- system prompt;
+- adaptador LoRA;
+- licença;
+- exemplos de mensagens.
+
+Alterar o system prompt não é o mesmo que retreinar os pesos.
+
+
+25. COMO ESCOLHER UM MODELO
+---------------------------
+
+Avalie:
+
+1. tarefa;
+2. qualidade real em testes representativos;
+3. tamanho do modelo;
+4. tamanho quantizado;
+5. RAM e VRAM disponíveis;
+6. contexto necessário;
+7. velocidade de geração;
+8. suporte a português;
+9. suporte a código;
+10. tool calling;
+11. structured output;
+12. licença;
+13. data e qualidade do conhecimento;
+14. comportamento de segurança;
+15. confiabilidade do publicador.
+
+Não escolha apenas porque o nome diz "uncensored" ou "coder".
+
+
+26. O COMPUTADOR ANALISADO NESTA AULA
+-------------------------------------
+
+Levantamento feito no ambiente atual em 30/08/2026:
+
+CPU:
+
+    Intel Xeon E5-2680 v4
+    14 núcleos / 28 threads
+
+Memória:
+
+    aproximadamente 15 GiB de RAM
+    4 GiB de swap
+
+GPU:
+
+    AMD Radeon RX 580 2048SP
+    aproximadamente 8 GiB de VRAM
+
+Editor:
+
+    VS Code 1.134.0
+
+Codex CLI:
+
+    0.145.0
+    possui --oss e --local-provider ollama
+
+Ollama no terminal analisado:
+
+    comando não encontrado
+
+Isso significa que o Ollama não está disponível no PATH desse ambiente. Ele
+precisa ser instalado ou o PATH precisa apontar para uma instalação existente.
+
+
+27. O QUE RODA BEM NESTA MÁQUINA
+--------------------------------
+
+Uma expectativa realista:
+
+- modelos quantizados de 7B ou 8B são o ponto de partida mais lógico;
+- llama2-uncensored:7b cabe com mais facilidade;
+- modelos pequenos podem rodar parcialmente na GPU ou na CPU;
+- a RX 580 não aparece na lista ROCm atual oficialmente suportada pelo Ollama;
+- o backend Vulkan pode ser uma alternativa experimental;
+- o desempenho e a compatibilidade devem ser confirmados com `ollama ps`;
+- contexto de 64k pode consumir memória demais para esta configuração.
+
+O `gpt-oss:20b` distribuído pelo Ollama ocupa aproximadamente 14 GB e a própria
+documentação menciona sistemas com 16 GB de memória. Esta máquina possui cerca
+de 15 GiB de RAM e 8 GiB de VRAM. Rodá-lo pode exigir divisão CPU/GPU, usar swap,
+ficar lento ou falhar, especialmente com contexto grande.
+
+Conclusão:
+
+    gpt-oss:20b pode ser tentado, mas não é a opção confortável desta máquina.
+
+
+28. COMO MEDIR EM VEZ DE ADIVINHAR
+---------------------------------
+
+Depois de iniciar uma resposta, rode:
+
+    ollama ps
+
+Observe `PROCESSOR`:
+
+- 100% GPU: modelo inteiro na GPU;
+- 100% CPU: modelo inteiro na RAM;
+- CPU/GPU: modelo dividido.
+
+Monitore:
+
+    watch -n 1 free -h
+
+Em AMD, conforme drivers instalados:
+
+    watch -n 1 rocm-smi
+
+ou ferramentas de sistema equivalentes.
+
+Meça:
+
+- tempo até o primeiro token;
+- tokens por segundo;
+- pico de RAM;
+- pico de VRAM;
+- uso de swap;
+- qualidade em tarefas reais;
+- estabilidade com contexto maior.
+
+
+29. VS CODE COM MODELO LOCAL
+----------------------------
+
+A integração oficial atual do Ollama usa uma extensão provedora de modelos.
+
+Requisitos documentados:
+
+- VS Code 1.127 ou mais novo;
+- Ollama instalado e executando;
+- pelo menos um modelo baixado;
+- versão recente do Ollama.
+
+Esta máquina possui VS Code 1.134 e atende ao requisito do editor.
+
+Passos:
+
+1. instalar a extensão Ollama no Marketplace do VS Code;
+2. iniciar o Ollama;
+3. executar `ollama pull MODELO`;
+4. abrir o Chat do VS Code;
+5. abrir o seletor de modelos;
+6. escolher um modelo da seção Ollama.
+
+A extensão procura por padrão:
+
+    http://127.0.0.1:11434
+
+
+30. MODELO LOCAL NO VS CODE NÃO SUBSTITUI TUDO DO COPILOT
+---------------------------------------------------------
+
+Segundo a documentação atual do VS Code, modelos BYOK ou locais funcionam no
+chat, em tarefas utilitárias e em fluxos agentes compatíveis.
+
+Eles não substituem automaticamente:
+
+- sugestões inline tradicionais;
+- autocomplete "texto fantasma";
+- busca semântica dependente do serviço;
+- embeddings fornecidos pelo GitHub;
+- todo recurso remoto do Copilot.
+
+Portanto, existem duas ideias diferentes:
+
+    VS Code Chat usando Ollama local
+
+e:
+
+    GitHub Copilot completo com todos os recursos na nuvem
+
+O primeiro pode funcionar sem conta GitHub e sem plano Copilot. O segundo possui
+recursos que ainda dependem do serviço GitHub.
+
+
+31. CONFIGURAR MODELO UTILITÁRIO NO VS CODE
+-------------------------------------------
+
+O VS Code permite selecionar modelos para tarefas menores, como:
+
+- título de conversa;
+- mensagem de commit;
+- pequenas operações auxiliares.
+
+Configurações atuais relevantes:
+
+    chat.utilityModel
+    chat.utilitySmallModel
+
+Apontá-las para um modelo local ajuda a manter mais partes do fluxo offline.
+
+
+32. COPILOT CLI COM OLLAMA
+--------------------------
+
+Copilot CLI é o agente de terminal do GitHub. Ele é diferente da extensão
+tradicional de autocomplete do VS Code.
+
+Configuração rápida documentada:
+
+    ollama launch copilot
+
+Com modelo explícito:
+
+    ollama launch copilot --model NOME_DO_MODELO
+
+Configuração manual atual:
+
+    export COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1
+    export COPILOT_PROVIDER_API_KEY=
+    export COPILOT_PROVIDER_WIRE_API=responses
+    export COPILOT_MODEL=NOME_DO_MODELO
+    copilot
+
+O modelo deve suportar:
+
+- streaming;
+- tool calling;
+- contexto suficiente.
+
+A documentação do GitHub recomenda contexto de pelo menos 128k para melhores
+resultados, enquanto o guia do Ollama recomenda no mínimo 64k. Isso pode ser
+pesado para esta máquina.
+
+
+33. COPILOT CLI OFFLINE
+-----------------------
+
+O GitHub documenta:
+
+    export COPILOT_OFFLINE=true
+
+Esse modo evita contato do CLI com servidores GitHub, mas a privacidade completa
+depende também do provider.
+
+Se o provider aponta para um servidor remoto, os dados continuam saindo.
+
+Para um fluxo local:
+
+    COPILOT_PROVIDER_BASE_URL -> localhost
+    COPILOT_OFFLINE           -> true
+    modelo                    -> local, sem sufixo cloud
+
+
+34. CLAUDE CODE COM OLLAMA
+--------------------------
+
+Claude Code é um agente de programação. A interface Claude Code pode ser
+apontada para um modelo que não é Claude, desde que o servidor ofereça o formato
+de API esperado.
+
+Configuração rápida:
+
+    ollama launch claude
+
+Configuração manual:
+
+    export ANTHROPIC_AUTH_TOKEN=ollama
+    export ANTHROPIC_API_KEY=""
+    export ANTHROPIC_BASE_URL=http://localhost:11434
+    claude --model NOME_DO_MODELO
+
+O Ollama implementa compatibilidade com Anthropic Messages API em:
+
+    /v1/messages
+
+Isso permite que Claude Code envie mensagens e ferramentas para o modelo local.
+
+
+35. USAR CLAUDE CODE NÃO TRANSFORMA O MODELO LOCAL EM CLAUDE
+-----------------------------------------------------------
+
+Quando executamos:
+
+    claude --model qwen3-coder
+
+a ferramenta que organiza o agente é Claude Code, mas quem produz as decisões
+do modelo é `qwen3-coder`.
+
+Podemos separar:
+
+    Harness/agente: Claude Code
+    Provider:        Ollama
+    Modelo:          modelo local selecionado
+
+A qualidade, o raciocínio, as recusas e o tool calling virão principalmente do
+modelo local, não de um modelo Claude hospedado pela Anthropic.
+
+
+36. CODEX CLI COM OLLAMA
+------------------------
+
+O Codex CLI instalado nesta máquina possui suporte a modelos open-source por
+meio das opções:
+
+    --oss
+    --local-provider ollama
+
+Forma simples:
+
+    codex --oss
+
+Modelo explícito:
+
+    codex --oss -m NOME_DO_MODELO
+
+Provider explícito:
+
+    codex --oss --local-provider ollama -m NOME_DO_MODELO
+
+Configuração automática atual do Ollama:
+
+    ollama launch codex
+
+O Codex precisa de contexto grande. O guia atual recomenda pelo menos 64k.
+
+
+37. PERFIL PERSISTENTE DO CODEX
+-------------------------------
+
+O Ollama atual pode criar um perfil automaticamente:
+
+    ollama launch codex --config
+
+Também é possível configurar um provider em TOML, apontando para:
+
+    http://localhost:11434/v1/
+
+Conceito simplificado:
+
+    model = "NOME_DO_MODELO"
+    model_provider = "ollama-local"
+
+    [model_providers.ollama-local]
+    name = "Ollama local"
+    base_url = "http://localhost:11434/v1/"
+    wire_api = "responses"
+
+Depois, execute o perfil configurado.
+
+Como formatos e campos mudam entre versões, confira sempre:
+
+    codex --help
+
+e a documentação correspondente à versão instalada.
+
+
+38. CODEX APP
+-------------
+
+A integração atual do Ollama também documenta:
+
+    ollama launch codex-app
+
+Porém, o Codex App documentado está disponível para macOS e Windows. Esta
+máquina usa Linux.
+
+No Linux, a opção apropriada é o Codex CLI, inclusive dentro do terminal
+integrado do VS Code.
+
+
+39. USAR UM AGENTE NO TERMINAL INTEGRADO
+----------------------------------------
+
+Mesmo que Claude Code, Codex ou Copilot CLI não apareça como extensão gráfica,
+ele pode ser executado dentro do VS Code:
+
+1. abrir a pasta do projeto;
+2. abrir Terminal > New Terminal;
+3. iniciar Ollama;
+4. executar o agente escolhido;
+5. revisar os diffs criados no painel Source Control.
+
+Assim, o agente trabalha no mesmo diretório aberto pelo editor.
+
+
+40. CHAT SIMPLES VERSUS AGENTE DE CÓDIGO
+-----------------------------------------
+
+Chat simples:
+
+- recebe texto;
+- gera texto;
+- não precisa editar arquivos;
+- não precisa chamar ferramentas.
+
+Agente de código:
+
+- examina repositório;
+- planeja etapas;
+- chama ferramentas;
+- lê e altera arquivos;
+- executa comandos;
+- interpreta erros;
+- repete o ciclo;
+- precisa respeitar permissões.
+
+Um modelo que conversa bem pode falhar como agente se não produzir tool calls
+no formato exato esperado.
+
+
+41. O HARNESS É TÃO IMPORTANTE QUANTO O MODELO
+----------------------------------------------
+
+Harness é a camada que conecta o modelo ao ambiente de trabalho.
+
+Ela pode fornecer:
+
+- leitura de arquivos;
+- escrita de patches;
+- terminal;
+- Git;
+- navegador;
+- MCPs;
+- aprovações;
+- sandbox;
+- compactação de contexto;
+- gerenciamento de sessão.
+
+O modelo sugere uma chamada de ferramenta. O harness valida, executa e devolve o
+resultado. Um modelo local não ganha acesso aos arquivos apenas porque foi
+baixado; o agente é quem fornece esse acesso.
+
+
+42. MODELO SEM CENSURA COM FERRAMENTAS É MAIS ARRISCADO
+-------------------------------------------------------
+
+Uma resposta insegura em um chat pode ficar apenas na tela.
+
+Uma resposta insegura em um agente pode virar:
+
+- comando de terminal;
+- exclusão de arquivo;
+- instalação de pacote;
+- envio de informação;
+- alteração no Git;
+- requisição para sistema externo.
+
+Por isso, não desative aprovações apenas porque a inferência é local.
+
+Local significa onde o cálculo acontece. Não significa que toda decisão do
+modelo é segura.
+
+
+43. CAMADAS DE SEGURANÇA RECOMENDADAS
+-------------------------------------
+
+- executar com usuário sem privilégios administrativos;
+- manter sandbox;
+- exigir confirmação para comandos destrutivos;
+- limitar diretórios acessíveis;
+- não entregar segredos ao modelo;
+- usar `.env` fora do Git;
+- revisar diffs antes de aceitar;
+- executar testes;
+- validar toda saída usada por outro sistema;
+- permitir somente ferramentas necessárias;
+- bloquear rede quando não for necessária;
+- usar containers descartáveis para experimentos perigosos;
+- manter backup e versionamento;
+- registrar auditoria em uso empresarial.
+
+
+44. SAÍDA DO MODELO NÃO É CÓDIGO CONFIÁVEL
+----------------------------------------------
+
+Nunca envie diretamente a saída de um modelo para:
+
+    eval
+    exec
+    shell
+    SQL
+    navegador
+
+sem validação e controle.
+
+Possíveis riscos:
+
+- command injection;
+- SQL injection;
+- XSS;
+- caminhos destrutivos;
+- dependências maliciosas;
+- vazamento de credenciais;
+- excesso de autonomia.
+
+As regras de negócio e segurança precisam existir fora do modelo.
+
+
+45. PRIVACIDADE
+---------------
+
+Segundo a documentação do Ollama, prompts e respostas de modelos executados
+localmente não são enviados ao ollama.com.
+
+Entretanto, o sistema completo pode conter outras conexões:
+
+- extensão do editor;
+- telemetria do editor;
+- Git remoto;
+- web search;
+- MCP remoto;
+- modelo com sufixo cloud;
+- atualizador;
+- agente de terceiros.
+
+Portanto:
+
+    inferência local != aplicação inteira automaticamente offline
+
+
+46. MODO LOCAL SEM OLLAMA CLOUD
+-------------------------------
+
+Configuração documentada:
+
+    OLLAMA_NO_CLOUD=1
+
+Ou no arquivo de servidor:
+
+    {
+      "disable_ollama_cloud": true
+    }
+
+Ao desativar a nuvem, recursos como modelos cloud e web search do Ollama deixam
+de funcionar.
+
+
+47. SEGURANÇA DA PORTA 11434
+-----------------------------
+
+Por padrão, o Ollama escuta em:
+
+    127.0.0.1:11434
+
+A API local não exige autenticação.
+
+Isso é aceitável para acesso local controlado, mas perigoso se a porta for
+publicada diretamente na rede ou na Internet.
+
+Não use sem proteção:
+
+    OLLAMA_HOST=0.0.0.0:11434
+
+Para acesso remoto profissional, adicione:
+
+- firewall;
+- TLS;
+- autenticação;
+- proxy reverso;
+- rate limiting;
+- logs;
+- controle de origem;
+- rede privada ou VPN.
+
+
+48. OLLAMA EM DOCKER
+--------------------
+
+CPU:
+
+    docker run -d \
+      -v ollama:/root/.ollama \
+      -p 11434:11434 \
+      --name ollama \
+      ollama/ollama
+
+AMD com imagem ROCm, quando o hardware for compatível:
+
+    docker run -d \
+      --device /dev/kfd \
+      --device /dev/dri \
+      -v ollama:/root/.ollama \
+      -p 11434:11434 \
+      --name ollama \
+      ollama/ollama:rocm
+
+Backend Vulkan atual:
+
+    docker run -d \
+      --device /dev/kfd \
+      --device /dev/dri \
+      -v ollama:/root/.ollama \
+      -p 11434:11434 \
+      --name ollama \
+      ollama/ollama
+
+Na RX 580 desta máquina, o caminho Vulkan é mais plausível para teste do que
+presumir suporte ROCm oficial. Isso ainda precisa ser validado na prática.
+
+
+49. CONCORRÊNCIA E MEMÓRIA
+---------------------------
+
+O Ollama pode enfileirar requisições e, quando há memória, processar em paralelo.
+
+Configurações relevantes:
+
+    OLLAMA_MAX_LOADED_MODELS
+    OLLAMA_NUM_PARALLEL
+    OLLAMA_MAX_QUEUE
+    OLLAMA_CONTEXT_LENGTH
+
+O consumo cresce aproximadamente com:
+
+    modelos carregados
+      x paralelismo
+      x tamanho do contexto
+
+Em máquina pequena, comece com:
+
+- um modelo carregado;
+- paralelismo 1;
+- contexto moderado;
+- fila limitada;
+- medição de RAM e VRAM.
+
+
+50. KEEP_ALIVE
+--------------
+
+Ollama mantém modelos carregados por algum tempo para reduzir a latência da
+próxima pergunta.
+
+Manter carregado:
+
+    curl http://localhost:11434/api/generate \
+      -d '{"model":"NOME", "keep_alive":-1}'
+
+Descarregar imediatamente:
+
+    curl http://localhost:11434/api/generate \
+      -d '{"model":"NOME", "keep_alive":0}'
+
+Ou:
+
+    ollama stop NOME
+
+
+51. ERRO: OLLAMA COMMAND NOT FOUND
+---------------------------------
+
+Mensagem:
+
+    ollama: command not found
+
+Verifique:
+
+    command -v ollama
+    echo $PATH
+
+Soluções:
+
+- instalar o Ollama;
+- abrir um novo terminal;
+- conferir o local do binário;
+- corrigir o PATH;
+- verificar se está dentro de container diferente do host.
+
+
+52. ERRO: CONNECTION REFUSED
+----------------------------
+
+Mensagem ao chamar `localhost:11434` indica normalmente que o servidor não está
+executando.
+
+Verifique:
+
+    systemctl status ollama
+    ss -ltnp | grep 11434
+    curl http://localhost:11434/api/version
+
+Tente:
+
+    sudo systemctl start ollama
+
+ou:
+
+    ollama serve
+
+
+53. MODELO NÃO ENCONTRADO
+-------------------------
+
+Verifique o nome exato:
+
+    ollama list
+
+Baixe:
+
+    ollama pull NOME:TAG
+
+Confira se o agente está usando o mesmo servidor Ollama onde o modelo foi
+baixado.
+
+
+54. MODELO NÃO APARECE NO VS CODE
+---------------------------------
+
+Checklist atual:
+
+1. Ollama está executando?
+2. `ollama list` mostra o modelo?
+3. VS Code atende à versão mínima?
+4. A extensão Ollama está instalada?
+5. O endpoint é `127.0.0.1:11434`?
+6. Execute `Ollama: Refresh Models` na Command Palette.
+7. Execute `Ollama: Diagnose Models`.
+8. Recarregue a janela do VS Code.
+
+
+55. AGENTE NÃO CHAMA FERRAMENTAS
+--------------------------------
+
+Possíveis causas:
+
+- modelo sem tool calling;
+- template incompatível;
+- contexto pequeno;
+- API parcialmente compatível;
+- versão antiga do Ollama;
+- modelo pequeno demais;
+- resposta de ferramenta fora do formato esperado.
+
+Teste primeiro uma ferramenta simples e observe logs do servidor e do agente.
+
+
+56. CONTEXTO ESTOURADO OU RESPOSTAS ESQUECIDAS
+---------------------------------------------
+
+Sintomas:
+
+- o modelo esquece arquivos;
+- repete trabalho;
+- ignora instruções antigas;
+- falha em repositórios grandes;
+- agente compacta a conversa com frequência.
+
+Soluções:
+
+- aumentar contexto se houver memória;
+- trabalhar em escopo menor;
+- fornecer somente arquivos relevantes;
+- usar resumo da tarefa;
+- escolher modelo com contexto maior;
+- dividir trabalho em etapas.
+
+
+57. RESPOSTA MUITO LENTA
+------------------------
+
+Verifique:
+
+    ollama ps
+
+Se estiver 100% CPU, o modelo pode não estar usando a GPU.
+
+Outras causas:
+
+- modelo grande;
+- contexto enorme;
+- swap;
+- driver incompatível;
+- pouca largura de banda de memória;
+- várias requisições;
+- outro processo usando GPU;
+- carregamento inicial dos pesos.
+
+
+58. OUT OF MEMORY
+-----------------
+
+Soluções possíveis:
+
+- escolher modelo menor;
+- usar quantização menor;
+- reduzir `num_ctx`;
+- reduzir paralelismo;
+- descarregar outros modelos;
+- fechar processos pesados;
+- usar inferência parcial em CPU;
+- aumentar RAM/VRAM;
+- usar modelo em nuvem quando necessário.
+
+
+59. TESTE JUSTO ENTRE MODELOS
+----------------------------
+
+Para comparar modelos:
+
+1. use os mesmos prompts;
+2. fixe temperatura e seed quando possível;
+3. use o mesmo contexto;
+4. teste tarefas permitidas e casos de segurança;
+5. avalie correção, não apenas fluência;
+6. execute o código gerado em sandbox;
+7. meça latência e memória;
+8. registre versão e tag;
+9. repita várias vezes;
+10. use casos reais do seu projeto.
+
+
+60. AVALIAÇÃO DE SEGURANÇA
+-----------------------------
+
+Verifique:
+
+- recusas corretas;
+- recusas exageradas;
+- vazamento de system prompt;
+- prompt injection;
+- geração de comandos destrutivos;
+- proteção de segredos;
+- saída malformada;
+- invenção de fontes;
+- comportamento com ferramenta;
+- tentativa de agir fora do escopo.
+
+Não dependa apenas do modelo para aplicar uma política de segurança.
+
+
+61. QUANDO USAR MODELO COM MENOS RECUSAS
+---------------------------------------
+
+Pode fazer sentido em ambiente controlado para:
+
+- pesquisa de alinhamento;
+- red teaming autorizado;
+- análise acadêmica;
+- escrita criativa legítima;
+- classificação de dados internos;
+- testes de filtros externos;
+- estudo comparativo.
+
+Mesmo nesses casos:
+
+- use dados autorizados;
+- isole ferramentas;
+- registre o experimento;
+- respeite leis e licenças;
+- mantenha revisão humana.
+
+
+62. QUANDO EVITAR
+-----------------
+
+Evite usar sem proteção em:
+
+- atendimento público;
+- saúde;
+- finanças;
+- aconselhamento jurídico;
+- sistemas com crianças;
+- agentes com acesso administrativo;
+- automação que afeta outras pessoas;
+- sistemas que executam a saída automaticamente;
+- ambientes com dados sensíveis sem governança.
+
+
+63. MODELO LOCAL EM PRODUÇÃO
+------------------------------
+
+Uma arquitetura profissional precisa acrescentar:
+
+- API autenticada;
+- TLS;
+- proxy reverso;
+- fila;
+- timeouts;
+- retries controlados;
+- rate limit;
+- observação de GPU e memória;
+- logs sem dados sensíveis;
+- fallback;
+- avaliações automatizadas;
+- versionamento do modelo;
+- política de atualização;
+- filtros independentes;
+- controle de acesso;
+- isolamento por usuário;
+- plano de capacidade.
+
+Ollama no notebook é excelente para aprender e prototipar. Servir muitas
+pessoas exige engenharia adicional.
+
+
+64. MODELO LOCAL OU API EM NUVEM?
+--------------------------------
+
+Use local quando:
+
+- privacidade e offline são essenciais;
+- o hardware comporta a tarefa;
+- a demanda é pequena ou previsível;
+- o modelo local tem qualidade suficiente;
+- deseja controle sobre pesos e versões.
+
+Use nuvem quando:
+
+- precisa de modelos muito maiores;
+- precisa atender muitos usuários;
+- não quer administrar GPU;
+- precisa de escalabilidade;
+- qualidade de fronteira é essencial.
+
+Use híbrido quando:
+
+- tarefas simples ficam locais;
+- tarefas complexas vão para nuvem;
+- dados sensíveis precisam ser removidos antes;
+- existe fallback entre modelos.
+
+
+65. ROTEIRO PRÁTICO PARA ESTA MÁQUINA
+--------------------------------------
+
+Etapa 1 — instalar:
+
+    curl -fsSL https://ollama.com/install.sh | sh
+
+Etapa 2 — verificar:
+
+    ollama --version
+    systemctl status ollama
+
+Etapa 3 — iniciar com modelo pequeno e atual:
+
+    ollama pull MODELO_7B_OU_8B_QUANTIZADO
+    ollama run MODELO_7B_OU_8B_QUANTIZADO
+
+Etapa 4 — medir:
+
+    ollama ps
+    free -h
+
+Etapa 5 — testar API:
+
+    curl http://localhost:11434/api/chat \
+      -d '{
+        "model":"MODELO_7B_OU_8B_QUANTIZADO",
+        "messages":[{"role":"user","content":"Explique este projeto"}],
+        "stream":false
+      }' | jq
+
+Etapa 6 — integrar ao VS Code.
+
+Etapa 7 — testar agente somente depois de confirmar tool calling.
+
+Etapa 8 — manter contexto pequeno no primeiro teste.
+
+Etapa 9 — aumentar contexto gradualmente e medir memória.
+
+
+66. ROTEIRO PARA CODEX LOCAL
+----------------------------
+
+    ollama serve
+
+Em outro terminal:
+
+    ollama pull MODELO_COMPATIVEL_COM_TOOLS
+
+Depois:
+
+    codex --oss --local-provider ollama -m MODELO_COMPATIVEL_COM_TOOLS
+
+Teste primeiro:
+
+    Leia o README e explique o projeto. Não altere arquivos.
+
+Depois teste alteração pequena e reversível:
+
+    Corrija um erro simples, mostre o diff e aguarde revisão.
+
+
+67. ROTEIRO PARA CLAUDE CODE LOCAL
+---------------------------------
+
+Forma automatizada:
+
+    ollama launch claude
+
+Forma manual:
+
+    export ANTHROPIC_AUTH_TOKEN=ollama
+    export ANTHROPIC_API_KEY=""
+    export ANTHROPIC_BASE_URL=http://localhost:11434
+    claude --model MODELO_COMPATIVEL_COM_TOOLS
+
+Confirme dentro da ferramenta qual modelo e endpoint estão ativos.
+
+
+68. ROTEIRO PARA COPILOT CLI LOCAL
+---------------------------------
+
+Forma automatizada:
+
+    ollama launch copilot
+
+Modo manual e offline:
+
+    export COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1
+    export COPILOT_PROVIDER_API_KEY=
+    export COPILOT_PROVIDER_WIRE_API=responses
+    export COPILOT_MODEL=MODELO_COMPATIVEL_COM_TOOLS
+    export COPILOT_OFFLINE=true
+    copilot
+
+
+69. CHECKLIST ANTES DE DAR ACESSO AO REPOSITÓRIO
+-------------------------------------------------
+
+[ ] O modelo suporta tool calling.
+[ ] O contexto é suficiente.
+[ ] O Git está limpo ou as alterações existentes foram identificadas.
+[ ] Existe backup ou controle de versão.
+[ ] Segredos não estão no repositório.
+[ ] O agente não executa tudo sem aprovação.
+[ ] A pasta permitida está limitada.
+[ ] Comandos destrutivos exigem confirmação.
+[ ] A rede está limitada quando possível.
+[ ] Testes podem ser executados.
+[ ] O usuário revisará o diff.
+
+
+70. O QUE APRENDEMOS COM O REQUEST.SH
+------------------------------------
+
+O arquivo da aula ensina simultaneamente:
+
+- gerenciamento de modelos com `pull` e `list`;
+- comparação de comportamentos;
+- API compatível com OpenAI;
+- API nativa do Ollama;
+- formato JSON;
+- uso de `jq`;
+- streaming ligado e desligado;
+- diferença entre resposta e raciocínio;
+- efeito do alinhamento;
+- risco de confundir falta de recusa com qualidade.
+
+
+71. MELHORIA FUTURA DO EXPERIMENTO
+---------------------------------
+
+Sem apagar os exemplos e comentários originais, a aula pode futuramente
+acrescentar testes seguros e objetivos, como:
+
+- explicar uma função com bug;
+- escrever teste unitário;
+- resumir um README;
+- devolver JSON em schema fixo;
+- citar incerteza quando falta contexto;
+- comparar uso de tokens;
+- medir tempo de resposta;
+- verificar uma API fictícia inventada;
+- testar prompt injection sem executar a saída.
+
+Assim será possível comparar qualidade, e não apenas recusa.
+
+
+72. PERGUNTAS DE REVISÃO
+------------------------
+
+1. Ollama é modelo ou runtime?
+2. Qual processo usa CPU e GPU?
+3. O que muda entre local e cloud?
+4. Open-weight significa código e dados totalmente abertos?
+5. O que é um modelo instruct?
+6. Por que "sem censura" é um termo impreciso?
+7. Alinhamento e correção factual são a mesma coisa?
+8. Por que a resposta do llama2-uncensored mostra alucinação?
+9. Qual é a diferença entre `/api/generate` e `/api/chat`?
+10. Para que serve `stream`?
+11. O que é quantização?
+12. Por que contexto aumenta consumo de memória?
+13. Por que agente de código exige tool calling?
+14. O que o harness acrescenta ao modelo?
+15. VS Code local substitui autocomplete Copilot?
+16. Como Claude Code usa um modelo que não é Claude?
+17. Qual flag do Codex ativa provider local?
+18. Por que a porta 11434 não deve ser exposta sem proteção?
+19. Como verificar uso de CPU ou GPU?
+20. Qual modelo é mais realista para a RX 580 e 15 GiB de RAM?
+
+
+73. RESPOSTAS RÁPIDAS
+----------------------
+
+1. Runtime e servidor de inferência.
+2. O runtime executando os pesos do modelo.
+3. Local usa hardware local; cloud processa em servidor remoto.
+4. Não. Depende do que foi publicado e da licença.
+5. Modelo ajustado para seguir instruções.
+6. Porque existem diferentes camadas de alinhamento e proteção.
+7. Não.
+8. Ela responde com confiança, mas mistura jogos e informações não verificadas.
+9. Generate recebe prompt; chat representa mensagens e papéis.
+10. Enviar tokens progressivamente.
+11. Reduzir precisão dos pesos para economizar memória.
+12. O KV cache e os tokens armazenados ocupam RAM/VRAM.
+13. Porque o agente precisa chamar arquivos, terminal e outras ferramentas.
+14. Ferramentas, permissões, contexto, execução e controle.
+15. Não substitui todos os recursos, especialmente inline completions.
+16. Apontando o endpoint Anthropic-compatible para o Ollama.
+17. `--oss`, opcionalmente com `--local-provider ollama`.
+18. A API local não exige autenticação.
+19. `ollama ps`.
+20. Começar por modelo 7B/8B quantizado e medir.
+
+
+74. RESUMO DIDÁTICO
+--------------------
+
+O Ollama facilita executar modelos no computador e expõe uma API local que pode
+ser utilizada por scripts, aplicações e agentes de programação. O comportamento
+de recusar ou responder depende muito do treinamento e do alinhamento do modelo,
+não apenas do Ollama. Um modelo chamado de "sem censura" possui menos barreiras,
+mas pode ser menos confiável e mais perigoso, principalmente quando recebe acesso
+a terminal e arquivos. VS Code, Copilot CLI, Claude Code e Codex conseguem usar
+modelos locais por integrações compatíveis, desde que o modelo tenha contexto,
+qualidade e tool calling suficientes. A segurança continua sendo responsabilidade
+do sistema: aprovações, sandbox, validação, Git e revisão humana permanecem
+necessários.
+
+
+75. RESUMO EXTREMAMENTE CURTO
+-----------------------------
+
+O Ollama roda a IA localmente e permite usá-la no editor. Modelos com menos
+recusas respondem mais, mas não são necessariamente melhores ou seguros.
+
+
+76. FRASE CENTRAL DA AULA
+-------------------------
+
+    Rodar localmente dá controle sobre o processamento; não elimina a necessidade
+    de escolher um bom modelo, limitar ferramentas e validar todas as respostas.
+
+
+77. FONTES DO PRÓPRIO PROJETO
+-----------------------------
+
+Script estudado:
+
+    aula_ollama/request.sh
+
+
+78. FONTES OFICIAIS E TÉCNICAS
+-------------------------------
+
+Ollama — início rápido:
+
+    https://docs.ollama.com/quickstart
+
+Ollama — instalação no Linux:
+
+    https://docs.ollama.com/linux
+
+Ollama — comandos:
+
+    https://docs.ollama.com/cli
+
+Ollama — API:
+
+    https://docs.ollama.com/api/introduction
+
+Ollama — compatibilidade com OpenAI:
+
+    https://docs.ollama.com/api/openai-compatibility
+
+Ollama — compatibilidade com Anthropic:
+
+    https://docs.ollama.com/api/anthropic-compatibility
+
+Ollama — hardware:
+
+    https://docs.ollama.com/gpu
+
+Ollama — contexto:
+
+    https://docs.ollama.com/context-length
+
+Ollama — Modelfile:
+
+    https://docs.ollama.com/modelfile
+
+Ollama — Docker:
+
+    https://docs.ollama.com/docker
+
+Ollama — perguntas frequentes, privacidade e concorrência:
+
+    https://docs.ollama.com/faq
+
+Ollama — autenticação:
+
+    https://docs.ollama.com/api/authentication
+
+Ollama com VS Code:
+
+    https://docs.ollama.com/integrations/vscode
+
+Ollama com Claude Code:
+
+    https://docs.ollama.com/integrations/claude-code
+
+Ollama com Codex CLI:
+
+    https://docs.ollama.com/integrations/codex
+
+Ollama com Codex App:
+
+    https://docs.ollama.com/integrations/codex-app
+
+Ollama com Copilot CLI:
+
+    https://docs.ollama.com/integrations/copilot-cli
+
+VS Code — modelos locais e BYOK:
+
+    https://code.visualstudio.com/docs/agent-customization/language-models
+
+GitHub Copilot CLI — modelos próprios e Ollama:
+
+    https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models
+
+Claude Code — LLM gateways:
+
+    https://code.claude.com/docs/en/llm-gateway
+
+OpenAI — gpt-oss:20b:
+
+    https://developers.openai.com/api/docs/models/gpt-oss-20b
+
+Biblioteca Ollama — gpt-oss:20b:
+
+    https://ollama.com/library/gpt-oss:20b
+
+Biblioteca Ollama — llama2-uncensored:
+
+    https://ollama.com/library/llama2-uncensored
+
+Paper Llama 2, fine-tuning e segurança:
+
+    https://arxiv.org/abs/2307.09288
+
+Paper Constitutional AI:
+
+    https://arxiv.org/abs/2212.08073
+
+NIST — perfil de riscos de IA generativa:
+
+    https://www.nist.gov/itl/ai-risk-management-framework
+
+OWASP — riscos de saída imprópria em aplicações LLM:
+
+    https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/
+
+
+FIM DA REFERÊNCIA DA AULA OLLAMA
+=================================
